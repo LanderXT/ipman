@@ -26,7 +26,7 @@ Every call is a JSON envelope piped to `ipman` on stdin:
 
 ```json
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
   "request_id": "<short-unique-string>",
   "actor": "agent",
   "op": "<entity.verb>",
@@ -37,7 +37,7 @@ Every call is a JSON envelope piped to `ipman` on stdin:
 Example:
 
 ```sh
-echo '{"protocol_version":1,"request_id":"r1","actor":"agent","op":"plan.create","params":{"title":"My Plan","summary":"Short description","priority":"medium"}}' | ipman
+echo '{"protocol_version":2,"request_id":"r1","actor":"agent","op":"plan.create","params":{"title":"My Plan","summary":"Short description","priority":"medium"}}' | ipman
 ```
 
 ## 3. Response shape
@@ -75,12 +75,12 @@ JSON request schemas document allowed params, primitive types/enums, required sc
 Create a task, start it, then close it:
 
 ```sh
-echo '{"protocol_version":1,"request_id":"r1","actor":"agent","op":"task.create","params":{"plan_id":1,"title":"Fix login bug"}}' | ipman
+echo '{"protocol_version":2,"request_id":"r1","actor":"agent","op":"task.create","params":{"plan_id":1,"title":"Fix login bug"}}' | ipman
 # → result.task.id, e.g. 42
 
-echo '{"protocol_version":1,"request_id":"r2","actor":"agent","op":"task.transition","params":{"id":42,"status":"in_progress"}}' | ipman
+echo '{"protocol_version":2,"request_id":"r2","actor":"agent","op":"task.transition","params":{"id":42,"status":"in_progress"}}' | ipman
 
-echo '{"protocol_version":1,"request_id":"r3","actor":"agent","op":"task.close","params":{"id":42,"outcome_summary":"Fixed null check in auth module","closing_comment":"Root cause was missing null guard"}}' | ipman
+echo '{"protocol_version":2,"request_id":"r3","actor":"agent","op":"task.close","params":{"id":42,"outcome_summary":"Fixed null check in auth module","closing_comment":"Root cause was missing null guard"}}' | ipman
 ```
 
 ### Cancel a Task
@@ -88,7 +88,7 @@ echo '{"protocol_version":1,"request_id":"r3","actor":"agent","op":"task.close",
 Cancel a task (work will not be done) with a closure record:
 
 ```sh
-echo '{"protocol_version":1,"request_id":"r1","actor":"agent","op":"task.cancel","params":{"id":42,"resolution":"not_planned","outcome_summary":"Decided not to implement - out of scope","closing_comment":"Deprioritized after planning review"}}' | ipman
+echo '{"protocol_version":2,"request_id":"r1","actor":"agent","op":"task.cancel","params":{"id":42,"resolution":"not_planned","outcome_summary":"Decided not to implement - out of scope","closing_comment":"Deprioritized after planning review"}}' | ipman
 ```
 
 `task.cancel` sets the supplied terminal resolution (`canceled`, `not_planned`, `discarded`, or `duplicate`); `task.close` sets `resolution=completed`. Use the right one — they mean different things in the audit trail.
@@ -98,7 +98,7 @@ echo '{"protocol_version":1,"request_id":"r1","actor":"agent","op":"task.cancel"
 Cancel an old task and atomically create its replacement:
 
 ```sh
-echo '{"protocol_version":1,"request_id":"r4","actor":"agent","op":"task.replace","params":{"id":42,"title":"Fix login bug (revised approach)","closing_comment":"Original approach was too narrow","outcome_summary":"Superseded by broader auth refactor"}}' | ipman
+echo '{"protocol_version":2,"request_id":"r4","actor":"agent","op":"task.replace","params":{"id":42,"title":"Fix login bug (revised approach)","closing_comment":"Original approach was too narrow","outcome_summary":"Superseded by broader auth refactor"}}' | ipman
 # → result.old_task (canceled), result.new_task (created), result.relation_id
 ```
 
@@ -107,13 +107,13 @@ echo '{"protocol_version":1,"request_id":"r4","actor":"agent","op":"task.replace
 Set the active plan, current phase, and current task:
 
 ```sh
-echo '{"protocol_version":1,"request_id":"r5","actor":"agent","op":"plan.activate","params":{"id":1}}' | ipman
+echo '{"protocol_version":2,"request_id":"r5","actor":"agent","op":"plan.activate","params":{"id":1}}' | ipman
 
-echo '{"protocol_version":1,"request_id":"r6","actor":"agent","op":"phase.set_current","params":{"id":3}}' | ipman
+echo '{"protocol_version":2,"request_id":"r6","actor":"agent","op":"phase.set_current","params":{"id":3}}' | ipman
 
-echo '{"protocol_version":1,"request_id":"r7","actor":"agent","op":"task.set_current","params":{"id":42}}' | ipman
+echo '{"protocol_version":2,"request_id":"r7","actor":"agent","op":"task.set_current","params":{"id":42}}' | ipman
 
-echo '{"protocol_version":1,"request_id":"r8","actor":"agent","op":"workspace.context_get","params":{}}' | ipman
+echo '{"protocol_version":2,"request_id":"r8","actor":"agent","op":"workspace.context_get","params":{}}' | ipman
 # → result.context.active_plan_id, current_phase_id, current_task_id
 ```
 
@@ -122,10 +122,10 @@ echo '{"protocol_version":1,"request_id":"r8","actor":"agent","op":"workspace.co
 Always export before closing or archiving — the snapshot survives outside the DB:
 
 ```sh
-echo '{"protocol_version":1,"request_id":"r9","actor":"agent","op":"plan.export","params":{"id":1}}' | ipman
+echo '{"protocol_version":2,"request_id":"r9","actor":"agent","op":"plan.export","params":{"id":1}}' | ipman
 # → save result.snapshot to version control or a handoff artifact
 
-echo '{"protocol_version":1,"request_id":"r10","actor":"agent","op":"plan.close","params":{"id":1,"outcome":"completed","outcome_summary":"All phases delivered"}}' | ipman
+echo '{"protocol_version":2,"request_id":"r10","actor":"agent","op":"plan.close","params":{"id":1,"outcome":"completed","outcome_summary":"All phases delivered"}}' | ipman
 ```
 
 ### Defer and Resume
@@ -133,10 +133,10 @@ echo '{"protocol_version":1,"request_id":"r10","actor":"agent","op":"plan.close"
 Defer a task, then resume it later:
 
 ```sh
-echo '{"protocol_version":1,"request_id":"r9","actor":"agent","op":"task.defer","params":{"id":42,"reason_text":"Blocked by upstream API change","reason_code":"external_dependency"}}' | ipman
+echo '{"protocol_version":2,"request_id":"r9","actor":"agent","op":"task.defer","params":{"id":42,"reason_text":"Blocked by upstream API change","reason_code":"external_dependency"}}' | ipman
 
 # Resume: transition back to todo or in_progress (deferred is not terminal)
-echo '{"protocol_version":1,"request_id":"r10","actor":"agent","op":"task.transition","params":{"id":42,"status":"todo"}}' | ipman
+echo '{"protocol_version":2,"request_id":"r10","actor":"agent","op":"task.transition","params":{"id":42,"status":"todo"}}' | ipman
 ```
 
 ### Audit Trail
@@ -144,9 +144,9 @@ echo '{"protocol_version":1,"request_id":"r10","actor":"agent","op":"task.transi
 Read recent events and closure memory:
 
 ```sh
-echo '{"protocol_version":1,"request_id":"r11","actor":"agent","op":"event.list","params":{"limit":20}}' | ipman
+echo '{"protocol_version":2,"request_id":"r11","actor":"agent","op":"event.list","params":{"limit":20}}' | ipman
 
-echo '{"protocol_version":1,"request_id":"r12","actor":"agent","op":"closure.get","params":{"entity_type":"task","entity_id":42}}' | ipman
+echo '{"protocol_version":2,"request_id":"r12","actor":"agent","op":"closure.get","params":{"entity_type":"task","entity_id":42}}' | ipman
 # → outcome_summary, lessons_learned, open_items_summary
 ```
 
@@ -155,9 +155,9 @@ echo '{"protocol_version":1,"request_id":"r12","actor":"agent","op":"closure.get
 Record durable guidance that future agents should follow for a plan, phase, or task:
 
 ```sh
-echo '{"protocol_version":1,"request_id":"r13","actor":"agent","op":"instruction.add","params":{"entity_type":"plan","entity_id":1,"instruction_type":"guidance","body":"Preserve backward compatibility unless explicitly told otherwise."}}' | ipman
+echo '{"protocol_version":2,"request_id":"r13","actor":"agent","op":"instruction.add","params":{"entity_type":"plan","entity_id":1,"instruction_type":"guidance","body":"Preserve backward compatibility unless explicitly told otherwise."}}' | ipman
 
-echo '{"protocol_version":1,"request_id":"r14","actor":"agent","op":"instruction.list","params":{"entity_type":"plan","entity_id":1}}' | ipman
+echo '{"protocol_version":2,"request_id":"r14","actor":"agent","op":"instruction.list","params":{"entity_type":"plan","entity_id":1}}' | ipman
 ```
 
 Use instructions for standing constraints and operating guidance. Use comments for conversational notes, progress, and decisions.
@@ -186,22 +186,22 @@ At session start, recover scope and context:
 
 ```sh
 # 1. Discover active plan, current phase, current task
-echo '{"protocol_version":1,"request_id":"h1","actor":"agent","op":"workspace.context_get","params":{}}' | ipman
+echo '{"protocol_version":2,"request_id":"h1","actor":"agent","op":"workspace.context_get","params":{}}' | ipman
 
 # 2. Inspect the active plan
-echo '{"protocol_version":1,"request_id":"h2","actor":"agent","op":"plan.get","params":{"id":1}}' | ipman
+echo '{"protocol_version":2,"request_id":"h2","actor":"agent","op":"plan.get","params":{"id":1}}' | ipman
 
 # 3. Read standing instructions for the active plan
-echo '{"protocol_version":1,"request_id":"h3","actor":"agent","op":"instruction.list","params":{"entity_type":"plan","entity_id":1}}' | ipman
+echo '{"protocol_version":2,"request_id":"h3","actor":"agent","op":"instruction.list","params":{"entity_type":"plan","entity_id":1}}' | ipman
 
 # 4. Catch up on recent changes
-echo '{"protocol_version":1,"request_id":"h4","actor":"agent","op":"event.list","params":{"limit":20}}' | ipman
+echo '{"protocol_version":2,"request_id":"h4","actor":"agent","op":"event.list","params":{"limit":20}}' | ipman
 
 # 5. Inspect current task
-echo '{"protocol_version":1,"request_id":"h5","actor":"agent","op":"task.get","params":{"id":42}}' | ipman
+echo '{"protocol_version":2,"request_id":"h5","actor":"agent","op":"task.get","params":{"id":42}}' | ipman
 
 # 6. Recover closure memory for closed entities
-echo '{"protocol_version":1,"request_id":"h6","actor":"agent","op":"closure.get","params":{"entity_type":"task","entity_id":42}}' | ipman
+echo '{"protocol_version":2,"request_id":"h6","actor":"agent","op":"closure.get","params":{"entity_type":"task","entity_id":42}}' | ipman
 ```
 
 Key points:
