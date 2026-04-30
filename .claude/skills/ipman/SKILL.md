@@ -205,8 +205,9 @@ echo '{"protocol_version":2,"request_id":"h6","actor":"agent","op":"closure.get"
 ```
 
 Key points:
-- Three identifier layers: **identity** (`id`, the internal int), **handles** (`uid`, `label`, `code` — the three selectors an op can accept), **breadcrumb** (`entity_ref` and `*_ref` variants, e.g. `P1/F3`, emitted on events and task relations). Use `uid` for agent-to-agent references and handoffs; use `label` in comments and human-facing notes; show `entity_ref` to humans. `entity_ref` is output-only — it is derived from mutable upstream state (`phase.move` rewrites it), so never store it and never pass it back as a selector.
-- Task and phase label selectors require `plan_uid` or `plan_label` scope. If multiple selectors are supplied, task/phase operations resolve `uid`, then `id`, then scoped `label`; plan operations resolve `uid`, then `id`, then `label`, then `code`. `plan.activate` requires exactly one of `id` or `code`.
+- `id` is canonical for both input and output. Every entity op (`*.get`, `*.update`, lifecycle ops, etc.) accepts only `id` as a selector. Responses return `id` and `label`; `uid`/`code` are not surfaced in API responses.
+- To resolve a `label` or plan `code` into an `id`, call the matching `*.lookup` op: `plan.lookup` accepts `uid`/`label`/`code`; `phase.lookup` and `task.lookup` accept `uid` or `label` (label requires `plan_id` scope). Lookup ops return `{id: N}` only — call them once, then use the `id` everywhere else.
+- `plan.activate` is the single non-lookup op that still accepts `code` directly (alongside `id`), since it is the entry point that establishes the active plan for a session.
 - `status`, `resolution`, and `origin_type` are three independent concepts — don't conflate them.
 - Never `DELETE FROM` main entities; use close/cancel/archive operations instead.
 - See `.ipman/workflows/ipman.workflow.agent-handoff.md` for the full handoff workflow.
