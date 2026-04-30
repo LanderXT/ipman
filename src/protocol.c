@@ -130,10 +130,10 @@ int ipman_request_parse(const char *body,
         return -1;
     }
     int version = jver->valueint;
-    if (version != 1) {
+    if (version != 2) {
         cJSON_Delete(root);
         *err_code_out = IPMAN_ERR_INVALID_REQUEST;
-        *err_msg_out  = "unsupported protocol_version";
+        *err_msg_out  = "protocol_version must be 2; ipman v2.0 dropped support for v1 envelopes — bump protocol_version to 2";
         return -1;
     }
 
