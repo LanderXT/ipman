@@ -400,6 +400,7 @@ static const char *parse_command(const char *arg) {
     if (strcmp(arg, "start")    == 0 ||                              strcmp(arg, "--start")   == 0) return "start";
     if (strcmp(arg, "close")    == 0 ||                              strcmp(arg, "--close")   == 0) return "close";
     if (strcmp(arg, "cancel")   == 0 ||                              strcmp(arg, "--cancel")  == 0) return "cancel";
+    if (strcmp(arg, "defer")    == 0 ||                              strcmp(arg, "--defer")   == 0) return "defer";
     if (strcmp(arg, "b64")      == 0 || strcmp(arg, "-B")  == 0 || strcmp(arg, "--b64")     == 0) return "b64";
     if (strcmp(arg, "usage")    == 0 || strcmp(arg, "-U")  == 0 || strcmp(arg, "--usage")   == 0) return "usage";
     return NULL;
@@ -878,6 +879,89 @@ static int run_cancel(int argc, char **argv) {
     return 0;
 }
 
+/* --defer <selector> --reason-text <text> [--reason-code <code>]
+ * Resolves a task selector and dispatches task.defer. The human verb
+ * requires --reason-text (the protocol allows reason_code alone, but free
+ * text guarantees the audit trail stays human-readable). --reason-code is
+ * optional and only sent when provided; deferred_until is not exposed —
+ * use the raw protocol for scheduled deferrals. */
+static int run_defer(int argc, char **argv) {
+    const char *selector    = NULL;
+    const char *reason_text = NULL;
+    const char *reason_code = NULL;
+
+    for (int i = 2; i < argc; ++i) {
+        if (strcmp(argv[i], "--reason-text") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman defer: --reason-text requires a value\n");
+                return 1;
+            }
+            reason_text = argv[++i];
+        } else if (strcmp(argv[i], "--reason-code") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman defer: --reason-code requires a value\n");
+                return 1;
+            }
+            reason_code = argv[++i];
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "ipman defer: unknown flag: %s\n", argv[i]);
+            return 1;
+        } else if (selector == NULL) {
+            selector = argv[i];
+        } else {
+            fprintf(stderr, "ipman defer: unexpected extra argument: %s\n",
+                    argv[i]);
+            return 1;
+        }
+    }
+
+    if (selector == NULL || reason_text == NULL) {
+        if (selector == NULL)
+            fprintf(stderr, "ipman defer: <selector> is required\n");
+        if (reason_text == NULL)
+            fprintf(stderr, "ipman defer: --reason-text is required\n");
+        fprintf(stderr,
+                "usage: ipman --defer <task-uid|label|id> "
+                "--reason-text <text> [--reason-code <code>]\n");
+        return 1;
+    }
+
+    char home[PATH_MAX], dbpath[PATH_MAX];
+    sqlite3 *db = NULL;
+    if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0)
+        return 1;
+
+    long id = 0;
+    cli_selector_kind_t kind = 0;
+    char err[CLI_SELECTOR_ERR_LEN];
+    if (cli_resolve_selector(db, selector, CLI_SELECTOR_KIND_TASK,
+                             &id, &kind, err, sizeof err) != 0) {
+        fprintf(stderr, "ipman defer: %s\n", err);
+        ipman_db_close(db);
+        return 1;
+    }
+
+    cJSON *p = cJSON_CreateObject();
+    cJSON_AddNumberToObject(p, "id",          (double)id);
+    cJSON_AddStringToObject(p, "reason_text", reason_text);
+    if (reason_code != NULL)
+        cJSON_AddStringToObject(p, "reason_code", reason_code);
+    cJSON *result = call_op(db, "task.defer", p);
+    cJSON_Delete(p);
+    ipman_db_close(db);
+
+    if (result == NULL) return 1;
+
+    cJSON *task  = cJSON_GetObjectItemCaseSensitive(result, "task");
+    cJSON *title = task ? cJSON_GetObjectItemCaseSensitive(task, "title") : NULL;
+    if (title && cJSON_IsString(title))
+        fprintf(stdout, "deferred task %ld: %s\n", id, title->valuestring);
+    else
+        fprintf(stdout, "deferred task %ld\n", id);
+    cJSON_Delete(result);
+    return 0;
+}
+
 static int run_log(void) {
     char home[PATH_MAX], dbpath[PATH_MAX];
     sqlite3 *db = NULL;
@@ -971,6 +1055,9 @@ int main(int argc, char **argv) {
     }
     if (cmd != NULL && strcmp(cmd, "cancel") == 0) {
         return run_cancel(argc, argv);
+    }
+    if (cmd != NULL && strcmp(cmd, "defer") == 0) {
+        return run_defer(argc, argv);
     }
     if (cmd != NULL && strcmp(cmd, "b64") == 0) {
         g_b64_mode = 1;
