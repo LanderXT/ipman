@@ -369,76 +369,20 @@ int ipman_read_task_selector(cJSON *params, sqlite3 *db,
                             sqlite3_int64 *task_id_out,
                             ipman_error_code_t *err_code_out,
                             const char **err_msg_out) {
-    cJSON *uid_item   = cJSON_GetObjectItemCaseSensitive(params, "uid");
-    cJSON *id_item    = cJSON_GetObjectItemCaseSensitive(params, "id");
-    cJSON *label_item = cJSON_GetObjectItemCaseSensitive(params, "label");
-
-    if (uid_item && cJSON_IsString(uid_item) && uid_item->valuestring) {
-        sqlite3_stmt *stmt;
-        int rc = sqlite3_prepare_v2(db, "SELECT id FROM tasks WHERE uid = ?", -1, &stmt, NULL);
-        if (rc == SQLITE_OK) {
-            sqlite3_bind_text(stmt, 1, uid_item->valuestring, -1, SQLITE_STATIC);
-            rc = sqlite3_step(stmt);
-            if (rc == SQLITE_ROW) {
-                *task_id_out = sqlite3_column_int64(stmt, 0);
-                sqlite3_finalize(stmt);
-                return 0;
-            }
-            sqlite3_finalize(stmt);
-        }
-        *err_code_out = IPMAN_ERR_NOT_FOUND;
-        *err_msg_out = "task not found by uid";
+    (void)db;
+    cJSON *id_item = cJSON_GetObjectItemCaseSensitive(params, "id");
+    if (!id_item || !cJSON_IsNumber(id_item)) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "id required (use task.lookup to resolve uid/label to id)";
         return -1;
     }
-    
-    if (id_item && cJSON_IsNumber(id_item)) {
-        *task_id_out = (sqlite3_int64)id_item->valuedouble;
-        return 0;
-    }
-    
-    if (label_item && cJSON_IsString(label_item) && label_item->valuestring) {
-        cJSON *plan_uid = cJSON_GetObjectItemCaseSensitive(params, "plan_uid");
-        cJSON *plan_label = cJSON_GetObjectItemCaseSensitive(params, "plan_label");
-        
-        const char *sql = NULL;
-        if (plan_uid && cJSON_IsString(plan_uid)) {
-            sql = "SELECT tasks.id FROM tasks JOIN plans ON tasks.plan_id = plans.id WHERE tasks.label = ? AND plans.uid = ?";
-        } else if (plan_label && cJSON_IsString(plan_label)) {
-            sql = "SELECT tasks.id FROM tasks JOIN plans ON tasks.plan_id = plans.id WHERE tasks.label = ? AND plans.label = ?";
-        } else {
-            *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-            *err_msg_out = "task label requires plan_uid or plan_label scope";
-            return -1;
-        }
-        
-        sqlite3_stmt *stmt;
-        int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
-        if (rc == SQLITE_OK) {
-            sqlite3_bind_text(stmt, 1, label_item->valuestring, -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt, 2, plan_uid ? plan_uid->valuestring : plan_label->valuestring, -1, SQLITE_STATIC);
-            rc = sqlite3_step(stmt);
-            if (rc == SQLITE_ROW) {
-                *task_id_out = sqlite3_column_int64(stmt, 0);
-                rc = sqlite3_step(stmt);
-                if (rc == SQLITE_ROW) {
-                    sqlite3_finalize(stmt);
-                    *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-                    *err_msg_out = "ambiguous task label";
-                    return -1;
-                }
-                sqlite3_finalize(stmt);
-                return 0;
-            }
-            sqlite3_finalize(stmt);
-        }
-        *err_code_out = IPMAN_ERR_NOT_FOUND;
-        *err_msg_out = "task not found by label";
+    if (id_item->valuedouble < 1.0) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "id must be a positive integer";
         return -1;
     }
-    
-    *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-    *err_msg_out = "task selector required: uid, id, or label";
-    return -1;
+    *task_id_out = (sqlite3_int64)id_item->valuedouble;
+    return 0;
 }
 
 static int read_optional_id(cJSON *params, const char *field,
@@ -1330,70 +1274,6 @@ static int validate_task_in_plan(sqlite3 *db,
     return 0;
 }
 
-static int read_parent_selector_strings(cJSON *params,
-                                        int has_parent_id,
-                                        const char **uid_out,
-                                        const char **label_out,
-                                        ipman_error_code_t *err_code_out,
-                                        const char **err_msg_out) {
-    cJSON *uid_item   = cJSON_GetObjectItemCaseSensitive(params, "parent_uid");
-    cJSON *label_item = cJSON_GetObjectItemCaseSensitive(params, "parent_label");
-    const char *uid   = (uid_item   && cJSON_IsString(uid_item)   && uid_item->valuestring[0])
-                        ? uid_item->valuestring : NULL;
-    const char *label = (label_item && cJSON_IsString(label_item) && label_item->valuestring[0])
-                        ? label_item->valuestring : NULL;
-    if ((uid != NULL) + (label != NULL) + has_parent_id > 1) {
-        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-        *err_msg_out  = "only one of parent_task_id, parent_uid, parent_label may be provided";
-        return -1;
-    }
-    *uid_out   = uid;
-    *label_out = label;
-    return 0;
-}
-
-static int resolve_parent_uid_or_label(sqlite3 *db,
-                                       const char *uid,
-                                       const char *label,
-                                       sqlite3_int64 plan_id,
-                                       int *has_out,
-                                       sqlite3_int64 *id_out,
-                                       ipman_error_code_t *err_code_out,
-                                       const char **err_msg_out) {
-    if (uid == NULL && label == NULL) return 0;
-    const char *sql;
-    const char *value;
-    const char *not_found_msg;
-    if (uid != NULL) {
-        sql          = "SELECT id FROM tasks WHERE uid = ? AND plan_id = ?";
-        value        = uid;
-        not_found_msg = "parent task not found by uid";
-    } else {
-        sql          = "SELECT id FROM tasks WHERE label = ? AND plan_id = ?";
-        value        = label;
-        not_found_msg = "parent task not found by label";
-    }
-    sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
-        *err_code_out = IPMAN_ERR_INTERNAL;
-        *err_msg_out  = "failed to prepare parent task lookup";
-        return -1;
-    }
-    sqlite3_bind_text(stmt, 1, value, -1, SQLITE_STATIC);
-    sqlite3_bind_int64(stmt, 2, plan_id);
-    int rc = sqlite3_step(stmt);
-    if (rc == SQLITE_ROW) {
-        *has_out = 1;
-        *id_out  = sqlite3_column_int64(stmt, 0);
-        sqlite3_finalize(stmt);
-        return 0;
-    }
-    sqlite3_finalize(stmt);
-    *err_code_out = IPMAN_ERR_NOT_FOUND;
-    *err_msg_out  = not_found_msg;
-    return -1;
-}
-
 static int task_replaces_relation_count(sqlite3 *db, sqlite3_int64 task_id) {
     const char *sql =
         "SELECT COUNT(*) FROM task_relations "
@@ -1676,7 +1556,7 @@ static int insert_task(sqlite3 *db,
 }
 
 const ipman_param_desc_t ipman_op_task_create_params[] = {
-    { "plan_id" }, { "phase_id" }, { "parent_task_id" }, { "parent_uid" }, { "parent_label" },
+    { "plan_id" }, { "phase_id" }, { "parent_task_id" },
     { "origin_task_id" },
     { "title" }, { "summary" }, { "description" },
     { "status" }, { "priority" }, { "task_type" }, { "origin_type" },
@@ -1694,8 +1574,6 @@ int ipman_op_task_create(const ipman_request_t *req, sqlite3 *db,
     sqlite3_int64 phase_id = 0;
     int has_parent_task_id = 0;
     sqlite3_int64 parent_task_id = 0;
-    const char *parent_uid_str = NULL;
-    const char *parent_label_str = NULL;
     int has_origin_task_id = 0;
     sqlite3_int64 origin_task_id = 0;
     const char *title = NULL;
@@ -1753,11 +1631,6 @@ int ipman_op_task_create(const ipman_request_t *req, sqlite3 *db,
                              err_code_out, err_msg_out) != 0) {
         return -1;
     }
-    if (read_parent_selector_strings(req->params, has_parent_task_id,
-                                     &parent_uid_str, &parent_label_str,
-                                     err_code_out, err_msg_out) != 0) {
-        return -1;
-    }
     if (origin_task_id == 0) has_origin_task_id = 0;
     if (strcmp(status, "todo") != 0) {
         *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
@@ -1789,19 +1662,11 @@ int ipman_op_task_create(const ipman_request_t *req, sqlite3 *db,
         run_sql(db, "ROLLBACK;");
         return -1;
     }
-    if (parent_uid_str != NULL || parent_label_str != NULL) {
-        if (resolve_parent_uid_or_label(db, parent_uid_str, parent_label_str,
-                                        plan_id, &has_parent_task_id,
-                                        &parent_task_id,
-                                        err_code_out, err_msg_out) != 0) {
-            run_sql(db, "ROLLBACK;");
-            return -1;
-        }
-    } else if (has_parent_task_id &&
-               validate_task_in_plan(db, parent_task_id, plan_id,
-                                     "parent task not found",
-                                     "parent task belongs to a different plan",
-                                     err_code_out, err_msg_out) != 0) {
+    if (has_parent_task_id &&
+        validate_task_in_plan(db, parent_task_id, plan_id,
+                              "parent task not found",
+                              "parent task belongs to a different plan",
+                              err_code_out, err_msg_out) != 0) {
         run_sql(db, "ROLLBACK;");
         return -1;
     }
@@ -1864,7 +1729,6 @@ int ipman_op_task_create(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_get_params[] = {
     { "id" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -1895,7 +1759,7 @@ int ipman_op_task_get(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_lookup_params[] = {
     { "uid" }, { "label" },
-    { "plan_id" }, { "plan_uid" }, { "plan_label" },
+    { "plan_id" },
     { NULL },
 };
 
@@ -2030,7 +1894,6 @@ const ipman_param_desc_t ipman_op_task_update_params[] = {
     { "id" }, { "title" }, { "summary" }, { "description" },
     { "due_date" }, { "target_start_date" }, { "estimate" },
     { "blocked_reason" }, { "reason_code" }, { "reason_text" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -2106,7 +1969,6 @@ static int update_task_phase(sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_move_params[] = {
     { "id" }, { "phase_id" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -2572,7 +2434,6 @@ static int change_task_with_old(sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_assign_params[] = {
     { "id" }, { "assignee" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -2596,7 +2457,6 @@ int ipman_op_task_assign(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_unassign_params[] = {
     { "id" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -2634,7 +2494,6 @@ static int update_task_priority(sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_set_priority_params[] = {
     { "id" }, { "priority" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -2680,7 +2539,6 @@ static int update_task_type(sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_set_type_params[] = {
     { "id" }, { "task_type" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -2758,7 +2616,6 @@ static int update_task_external_ref(sqlite3 *db,
 const ipman_param_desc_t ipman_op_task_set_origin_params[] = {
     { "id" }, { "origin_type" },
     { "origin_ref_type" }, { "origin_ref_id" }, { "origin_task_id" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -2970,7 +2827,6 @@ static cJSON *load_comment(sqlite3 *db, sqlite3_int64 comment_id) {
 
 const ipman_param_desc_t ipman_op_task_comment_add_params[] = {
     { "id" }, { "body" }, { "comment_type" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -3201,7 +3057,6 @@ static int insert_task_closure_record(sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_transition_params[] = {
     { "id" }, { "status" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -3266,7 +3121,6 @@ int ipman_op_task_transition(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_defer_params[] = {
     { "id" }, { "deferred_until" }, { "reason_code" }, { "reason_text" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -3353,7 +3207,6 @@ const ipman_param_desc_t ipman_op_task_cancel_params[] = {
     /* optional terminal-closure fields, read by read_task_terminal_closure: */
     { "closing_comment" }, { "outcome_summary" },
     { "lessons_learned" }, { "open_items_summary" }, { "followup_needed" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -3473,7 +3326,6 @@ int ipman_op_task_cancel(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_link_dependency_params[] = {
     { "id" }, { "target_task_id" }, { "relation_type" }, { "notes" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -3635,7 +3487,6 @@ int ipman_op_task_link_dependency(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_unlink_dependency_params[] = {
     { "id" }, { "target_task_id" }, { "relation_type" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -3801,7 +3652,6 @@ const ipman_param_desc_t ipman_op_task_mark_duplicate_params[] = {
     { "comment" }, { "relation_notes" },
     { "closing_comment" }, { "outcome_summary" },
     { "lessons_learned" }, { "open_items_summary" }, { "followup_needed" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -4013,7 +3863,7 @@ int ipman_op_task_mark_duplicate(const ipman_request_t *req, sqlite3 *db,
 }
 
 const ipman_param_desc_t ipman_op_task_replace_params[] = {
-    { "id" }, { "phase_id" }, { "parent_task_id" }, { "parent_uid" }, { "parent_label" },
+    { "id" }, { "phase_id" }, { "parent_task_id" },
     { "title" }, { "summary" }, { "description" },
     { "priority" }, { "task_type" }, { "assignee" },
     { "due_date" }, { "target_start_date" }, { "estimate" },
@@ -4021,7 +3871,6 @@ const ipman_param_desc_t ipman_op_task_replace_params[] = {
     { "comment" }, { "relation_notes" },
     { "closing_comment" }, { "outcome_summary" },
     { "lessons_learned" }, { "open_items_summary" }, { "followup_needed" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -4034,8 +3883,6 @@ int ipman_op_task_replace(const ipman_request_t *req, sqlite3 *db,
     sqlite3_int64 phase_id = 0;
     int parent_present = 0;
     sqlite3_int64 parent_task_id = 0;
-    const char *parent_uid_str = NULL;
-    const char *parent_label_str = NULL;
     const char *title = NULL;
     const char *summary = NULL;
     const char *description = NULL;
@@ -4087,11 +3934,6 @@ int ipman_op_task_replace(const ipman_request_t *req, sqlite3 *db,
                              err_code_out, err_msg_out) != 0) {
         return -1;
     }
-    if (read_parent_selector_strings(req->params, parent_present,
-                                     &parent_uid_str, &parent_label_str,
-                                     err_code_out, err_msg_out) != 0) {
-        return -1;
-    }
     if (comment != NULL && is_blank(comment)) {
         *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
         *err_msg_out = "comment must be non-empty when provided";
@@ -4127,15 +3969,6 @@ int ipman_op_task_replace(const ipman_request_t *req, sqlite3 *db,
         return -1;
     }
     sqlite3_int64 plan_id = task_json_plan_id(old_task);
-    if (parent_uid_str != NULL || parent_label_str != NULL) {
-        if (resolve_parent_uid_or_label(db, parent_uid_str, parent_label_str,
-                                        plan_id, &parent_present, &parent_task_id,
-                                        err_code_out, err_msg_out) != 0) {
-            cJSON_Delete(old_task);
-            run_sql(db, "ROLLBACK;");
-            return -1;
-        }
-    }
     if (!phase_present) {
         phase_id = task_json_nullable_id(old_task, "phase_id");
     }
@@ -4149,7 +3982,7 @@ int ipman_op_task_replace(const ipman_request_t *req, sqlite3 *db,
         run_sql(db, "ROLLBACK;");
         return -1;
     }
-    if (parent_task_id > 0 && parent_uid_str == NULL && parent_label_str == NULL &&
+    if (parent_task_id > 0 &&
         validate_task_in_plan(db, parent_task_id, plan_id,
                               "parent task not found",
                               "parent task belongs to a different plan",
@@ -4325,7 +4158,6 @@ int ipman_op_task_replace(const ipman_request_t *req, sqlite3 *db,
 const ipman_param_desc_t ipman_op_task_close_params[] = {
     { "id" }, { "outcome_summary" }, { "closing_comment" },
     { "lessons_learned" }, { "open_items_summary" }, { "followup_needed" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -4418,7 +4250,6 @@ int ipman_op_task_close(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_task_reopen_params[] = {
     { "id" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
