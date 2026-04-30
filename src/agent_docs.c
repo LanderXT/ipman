@@ -421,7 +421,7 @@ static int append_frontmatter(Buf *b, const char *kind, const char *generated_at
                               const char *subject_key, const char *subject,
                               const char *entity) {
     if (buf_appendf(b,
-                    "---\nkind: %s\nprotocol_version: 1\n"
+                    "---\nkind: %s\nprotocol_version: 2\n"
                     "generator_version: %s\ngenerated_at: %s\n",
                     kind, IPMAN_AGENT_DOCS_GENERATOR_VERSION, generated_at) != 0) {
         return -1;
@@ -445,7 +445,7 @@ static char *render_start_here(const char *home, const char *db_path,
         "- Manifest: `%s/manifest.json`\n\n"
         "Invoke it by sending one JSON request on stdin and reading one JSON response on stdout:\n\n"
         "```sh\n"
-        "printf '%%s' '{\"protocol_version\":1,\"request_id\":\"agent-noop\",\"actor\":\"agent\",\"op\":\"noop\",\"params\":{}}' | ipman\n"
+        "printf '%%s' '{\"protocol_version\":2,\"request_id\":\"agent-noop\",\"actor\":\"agent\",\"op\":\"noop\",\"params\":{}}' | ipman\n"
         "```\n\n"
         "Use `ipman b64` or `ipman --b64` when shell escaping is awkward; stdin is base64-encoded JSON and stdout is a base64-encoded JSON response.\n\n"
         "Stdout is the API surface and must be parsed as JSON after any base64 transport decoding. Logs go to stderr. Always inspect `.ok`; on failure inspect `.error.code` and `.error.message`.\n\n"
@@ -512,7 +512,7 @@ static char *render_protocol_doc(const char *generated_at) {
         "# ipman Protocol Envelope\n\n"
         "Every invocation reads one JSON object from stdin and writes one JSON object to stdout. In `b64`/`--b64` transport mode, stdin and stdout carry base64-encoded JSON instead.\n\n"
         "## Request Fields\n\n"
-        "- `protocol_version`: integer, currently `1`.\n"
+        "- `protocol_version`: integer, currently `2`.\n"
         "- `request_id`: non-empty string echoed in the response when the request can be parsed far enough.\n"
         "- `actor`: non-empty string recorded in events, instructions, and comments.\n"
         "- `op`: non-empty public operation name from the operation index.\n"
@@ -534,9 +534,9 @@ static char *render_protocol_doc(const char *generated_at) {
         "- `allowed_next[]`: every transition reachable from `current_status`, each paired with the operation that performs it.\n"
         "- `required_operation`: when the attempted transition exists but requires a specific semantic op, names that op; otherwise `null`.\n\n"
         "## Minimum Valid Example\n\n"
-        "```json\n{\"protocol_version\":1,\"request_id\":\"min-1\",\"actor\":\"agent\",\"op\":\"noop\",\"params\":{}}\n```\n\n"
+        "```json\n{\"protocol_version\":2,\"request_id\":\"min-1\",\"actor\":\"agent\",\"op\":\"noop\",\"params\":{}}\n```\n\n"
         "## Error Example\n\n"
-        "```json\n{\"protocol_version\":1,\"request_id\":\"bad-1\",\"actor\":\"agent\",\"op\":\"plan.create\",\"params\":{}}\n```\n") != 0) return NULL;
+        "```json\n{\"protocol_version\":2,\"request_id\":\"bad-1\",\"actor\":\"agent\",\"op\":\"plan.create\",\"params\":{}}\n```\n") != 0) return NULL;
     return buf_take(&b);
 }
 
@@ -657,7 +657,7 @@ static char *render_example_doc(const OperationSpec *spec, const char *generated
         "Adapt ids, codes, dates, and text to the current workspace before running. The envelope includes `request_id`, `actor`, `protocol_version`, `op`, and `params`.\n\n"
         "```json\n"
         "{\n"
-        "  \"protocol_version\": 1,\n"
+        "  \"protocol_version\": 2,\n"
         "  \"request_id\": \"example-%s\",\n"
         "  \"actor\": \"agent\",\n"
         "  \"op\": \"%s\",\n"
@@ -1045,7 +1045,7 @@ static char *render_operation_schema_json(const OperationSpec *spec) {
         "  \"additionalProperties\": false,\n"
         "  \"required\": [\"protocol_version\", \"request_id\", \"actor\", \"op\", \"params\"],\n"
         "  \"properties\": {\n"
-        "    \"protocol_version\": {\"const\": 1},\n"
+        "    \"protocol_version\": {\"const\": 2},\n"
         "    \"request_id\": {\"type\": \"string\", \"minLength\": 1},\n"
         "    \"actor\": {\"type\": \"string\", \"minLength\": 1},\n"
         "    \"op\": {\"const\": \"%s\"},\n"
@@ -1084,7 +1084,7 @@ static char *render_envelope_schema_json(void) {
         "  \"additionalProperties\": false,\n"
         "  \"required\": [\"protocol_version\", \"request_id\", \"actor\", \"op\", \"params\"],\n"
         "  \"properties\": {\n"
-        "    \"protocol_version\": {\"const\": 1},\n"
+        "    \"protocol_version\": {\"const\": 2},\n"
         "    \"request_id\": {\"type\": \"string\", \"minLength\": 1},\n"
         "    \"actor\": {\"type\": \"string\", \"minLength\": 1},\n"
         "    \"op\": {\"type\": \"string\", \"minLength\": 1},\n"
@@ -1102,7 +1102,7 @@ static char *render_manifest_schema_json(void) {
         "  \"required\": [\"generator_version\", \"protocol_version\", \"generated_at\", \"workspace_root\", \"db_path\", \"entrypoints\", \"indexes\", \"entities\", \"operations\", \"files\", \"source_fingerprint\", \"content_fingerprint\"],\n"
         "  \"properties\": {\n"
         "    \"generator_version\": {\"type\": \"string\"},\n"
-        "    \"protocol_version\": {\"const\": 1},\n"
+        "    \"protocol_version\": {\"const\": 2},\n"
         "    \"generated_at\": {\"type\": \"string\"},\n"
         "    \"workspace_root\": {\"type\": \"string\"},\n"
         "    \"db_path\": {\"type\": \"string\"},\n"
@@ -1129,7 +1129,7 @@ static char *render_workflow_doc(const char *name, const char *generated_at) {
             "Continue work by moving a task with `task.transition`, recording progress with `task.comment_add`, and using `task.defer`, `task.cancel`, `task.replace`, or `task.close` for semantic scope changes.\n\n"
             "Common mistakes: relying only on comments, ignoring `.ok`, manually editing the database, and treating `status`, `resolution`, and `origin_type` as interchangeable.\n\n"
             "Minimal example:\n\n"
-            "```json\n{\"protocol_version\":1,\"request_id\":\"handoff-pending\",\"actor\":\"agent\",\"op\":\"task.list\",\"params\":{\"pending\":true,\"limit\":100}}\n```\n") != 0) return NULL;
+            "```json\n{\"protocol_version\":2,\"request_id\":\"handoff-pending\",\"actor\":\"agent\",\"op\":\"task.list\",\"params\":{\"pending\":true,\"limit\":100}}\n```\n") != 0) return NULL;
     } else if (strcmp(name, "release-management") == 0) {
         if (buf_append(&b,
             "# Workflow: Release Management\n\n"
@@ -1137,7 +1137,7 @@ static char *render_workflow_doc(const char *name, const char *generated_at) {
             "Use `plan.create`, `phase.create`, and `task.create` to model the release. Inspect with `plan.progress`, `phase.progress`, and `task.list`. Continue by transitioning tasks to `in_progress`, closing completed work with `task.close`, deferring out-of-release work with `task.defer`, and replacing changed scope with `task.replace`.\n\n"
             "Close with `plan.close` after release tasks are terminal, then archive with `plan.archive` when the plan should leave active views.\n\n"
             "Common mistakes: using comments to cancel work, closing without closure memory, or archiving before plan closure.\n\n"
-            "```json\n{\"protocol_version\":1,\"request_id\":\"release-plan\",\"actor\":\"agent\",\"op\":\"plan.create\",\"params\":{\"code\":\"REL-001\",\"title\":\"Release 1\",\"priority\":\"high\"}}\n```\n") != 0) return NULL;
+            "```json\n{\"protocol_version\":2,\"request_id\":\"release-plan\",\"actor\":\"agent\",\"op\":\"plan.create\",\"params\":{\"code\":\"REL-001\",\"title\":\"Release 1\",\"priority\":\"high\"}}\n```\n") != 0) return NULL;
     } else if (strcmp(name, "bug-triage") == 0) {
         if (buf_append(&b,
             "# Workflow: Bug Triage\n\n"
@@ -1145,7 +1145,7 @@ static char *render_workflow_doc(const char *name, const char *generated_at) {
             "Create bugs with `task.create` and `task_type:\"bug\"`. Inspect with `task.list` filtered by `task_type` through the operation docs, add investigation notes with `task.comment_add`, link blockers with `task.link_dependency`, and use `task.cancel` or `task.mark_duplicate` when a report should not proceed.\n\n"
             "Continue by assigning ownership with `task.assign`, moving to `in_progress`, and closing with `task.close` when fixed and verified.\n\n"
             "Common mistakes: marking duplicates by text only, skipping closure memory, and losing the original origin metadata.\n\n"
-            "```json\n{\"protocol_version\":1,\"request_id\":\"bug-task\",\"actor\":\"agent\",\"op\":\"task.create\",\"params\":{\"plan_id\":1,\"title\":\"Fix login failure\",\"task_type\":\"bug\",\"origin_type\":\"external_request\",\"priority\":\"high\"}}\n```\n") != 0) return NULL;
+            "```json\n{\"protocol_version\":2,\"request_id\":\"bug-task\",\"actor\":\"agent\",\"op\":\"task.create\",\"params\":{\"plan_id\":1,\"title\":\"Fix login failure\",\"task_type\":\"bug\",\"origin_type\":\"external_request\",\"priority\":\"high\"}}\n```\n") != 0) return NULL;
     } else {
         if (buf_append(&b,
             "# Workflow: Scope Control\n\n"
@@ -1153,7 +1153,7 @@ static char *render_workflow_doc(const char *name, const char *generated_at) {
             "Inspect current work with `task.list`. Use `task.defer` for later work, `task.cancel` for removed work, `task.replace` when the correct work changed, and `task.close` only when the task is completed. Use `event.list` and `closure.get` to review why scope changed.\n\n"
             "Continue by creating addendum or discovered tasks with `task.create` and appropriate `origin_type` values.\n\n"
             "Common mistakes: editing `status` directly, using `task.update` for terminal decisions, or writing only a comment for a scope change.\n\n"
-            "```json\n{\"protocol_version\":1,\"request_id\":\"scope-defer\",\"actor\":\"agent\",\"op\":\"task.defer\",\"params\":{\"id\":1,\"reason_text\":\"Out of current release scope.\"}}\n```\n") != 0) return NULL;
+            "```json\n{\"protocol_version\":2,\"request_id\":\"scope-defer\",\"actor\":\"agent\",\"op\":\"task.defer\",\"params\":{\"id\":1,\"reason_text\":\"Out of current release scope.\"}}\n```\n") != 0) return NULL;
     }
     return buf_take(&b);
 }
@@ -1391,7 +1391,7 @@ static char *render_manifest(const char *home, const char *db_path,
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) return NULL;
     cJSON_AddStringToObject(root, "generator_version", IPMAN_AGENT_DOCS_GENERATOR_VERSION);
-    cJSON_AddNumberToObject(root, "protocol_version", 1);
+    cJSON_AddNumberToObject(root, "protocol_version", 2);
     cJSON_AddStringToObject(root, "generated_at", generated_at);
     cJSON_AddStringToObject(root, "workspace_root", home);
     cJSON_AddStringToObject(root, "db_path", db_path);
