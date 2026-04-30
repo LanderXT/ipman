@@ -145,6 +145,7 @@ static void print_usage(FILE *out) {
         "  -L  / --ls                  List pending tasks for the active plan\n"
         "  -SH / --show <selector>     Show detail for a task or phase\n"
         "  -LG / --log                 Show recent workspace events\n"
+        "  -N  / --next                Show active plan, cursor, instructions and Up next\n"
         "  -R  / --render <plan>       Render plan as Markdown (code, uid, label, or id)\n"
         "\n"
         "Write:\n"
@@ -420,6 +421,7 @@ static const char *parse_command(const char *arg) {
     if (strcmp(arg, "ls")       == 0 || strcmp(arg, "-L")  == 0 || strcmp(arg, "--ls")      == 0) return "ls";
     if (strcmp(arg, "show")     == 0 || strcmp(arg, "-SH") == 0 || strcmp(arg, "--show")    == 0) return "show";
     if (strcmp(arg, "log")      == 0 || strcmp(arg, "-LG") == 0 || strcmp(arg, "--log")     == 0) return "log";
+    if (strcmp(arg, "next")     == 0 || strcmp(arg, "-N")  == 0 || strcmp(arg, "--next")    == 0) return "next";
     if (strcmp(arg, "start")    == 0 ||                              strcmp(arg, "--start")   == 0) return "start";
     if (strcmp(arg, "close")    == 0 ||                              strcmp(arg, "--close")   == 0) return "close";
     if (strcmp(arg, "cancel")   == 0 ||                              strcmp(arg, "--cancel")  == 0) return "cancel";
@@ -1129,6 +1131,185 @@ static int run_activate(const char *selector) {
     return 0;
 }
 
+/* --next: combined read-only view that replaces the typical agent
+ * handoff sequence (workspace.context_get + plan/phase/task.get +
+ * instruction.list per scope + task.list pending) with a single CLI
+ * call. T3.1 fetches the data and renders a minimal line-based view;
+ * T3.2 will replace the rendering with grouped cli_table output. */
+static int run_next(void) {
+    char home[PATH_MAX], dbpath[PATH_MAX];
+    sqlite3 *db = NULL;
+    if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0)
+        return 1;
+
+    /* 1. workspace.context_get → cursor IDs */
+    cJSON *ctx_params = cJSON_CreateObject();
+    cJSON *ctx = call_op(db, "workspace.context_get", ctx_params);
+    cJSON_Delete(ctx_params);
+    if (ctx == NULL) { ipman_db_close(db); return 1; }
+
+    cJSON *context  = cJSON_GetObjectItemCaseSensitive(ctx, "context");
+    cJSON *ap_id    = context ? cJSON_GetObjectItemCaseSensitive(context, "active_plan_id")   : NULL;
+    cJSON *cph_id   = context ? cJSON_GetObjectItemCaseSensitive(context, "current_phase_id") : NULL;
+    cJSON *ctk_id   = context ? cJSON_GetObjectItemCaseSensitive(context, "current_task_id")  : NULL;
+    long plan_id  = (cJSON_IsNumber(ap_id))  ? (long)ap_id->valuedouble  : 0;
+    long phase_id = (cJSON_IsNumber(cph_id)) ? (long)cph_id->valuedouble : 0;
+    long task_id  = (cJSON_IsNumber(ctk_id)) ? (long)ctk_id->valuedouble : 0;
+    cJSON_Delete(ctx);
+
+    if (plan_id <= 0) {
+        fprintf(stderr,
+                "ipman next: no active plan — run `ipman --activate <plan>` first\n");
+        ipman_db_close(db);
+        return 1;
+    }
+
+    /* 2-4. plan.get / phase.get / task.get for full, authoritative entities. */
+    cJSON *plan_obj = NULL, *phase_obj = NULL, *task_obj = NULL;
+    {
+        cJSON *p = cJSON_CreateObject();
+        cJSON_AddNumberToObject(p, "id", (double)plan_id);
+        cJSON *r = call_op(db, "plan.get", p);
+        cJSON_Delete(p);
+        if (r == NULL) { ipman_db_close(db); return 1; }
+        plan_obj = cJSON_DetachItemFromObjectCaseSensitive(r, "plan");
+        cJSON_Delete(r);
+    }
+    if (phase_id > 0) {
+        cJSON *p = cJSON_CreateObject();
+        cJSON_AddNumberToObject(p, "id", (double)phase_id);
+        cJSON *r = call_op(db, "phase.get", p);
+        cJSON_Delete(p);
+        if (r != NULL) {
+            phase_obj = cJSON_DetachItemFromObjectCaseSensitive(r, "phase");
+            cJSON_Delete(r);
+        }
+    }
+    if (task_id > 0) {
+        cJSON *p = cJSON_CreateObject();
+        cJSON_AddNumberToObject(p, "id", (double)task_id);
+        cJSON *r = call_op(db, "task.get", p);
+        cJSON_Delete(p);
+        if (r != NULL) {
+            task_obj = cJSON_DetachItemFromObjectCaseSensitive(r, "task");
+            cJSON_Delete(r);
+        }
+    }
+
+    /* 5-7. instruction.list per scope. Phase / task scopes only when
+     * the cursor is set; otherwise the entity_id would be invalid. */
+    cJSON *plan_instr = NULL, *phase_instr = NULL, *task_instr = NULL;
+    {
+        cJSON *p = cJSON_CreateObject();
+        cJSON_AddStringToObject(p, "entity_type", "plan");
+        cJSON_AddNumberToObject(p, "entity_id",   (double)plan_id);
+        plan_instr = call_op(db, "instruction.list", p);
+        cJSON_Delete(p);
+    }
+    if (phase_id > 0) {
+        cJSON *p = cJSON_CreateObject();
+        cJSON_AddStringToObject(p, "entity_type", "phase");
+        cJSON_AddNumberToObject(p, "entity_id",   (double)phase_id);
+        phase_instr = call_op(db, "instruction.list", p);
+        cJSON_Delete(p);
+    }
+    if (task_id > 0) {
+        cJSON *p = cJSON_CreateObject();
+        cJSON_AddStringToObject(p, "entity_type", "task");
+        cJSON_AddNumberToObject(p, "entity_id",   (double)task_id);
+        task_instr = call_op(db, "instruction.list", p);
+        cJSON_Delete(p);
+    }
+
+    /* 8. task.list pending limit 5 — the "Up next" queue for the plan. */
+    cJSON *pending = NULL;
+    {
+        cJSON *p = cJSON_CreateObject();
+        cJSON_AddNumberToObject(p, "plan_id", (double)plan_id);
+        cJSON_AddBoolToObject  (p, "pending", 1);
+        cJSON_AddNumberToObject(p, "limit",   5);
+        pending = call_op(db, "task.list", p);
+        cJSON_Delete(p);
+    }
+
+    /* ---- Render (T3.1: line-based; T3.2 will replace with cli_table) ---- */
+    if (cJSON_IsObject(plan_obj)) {
+        cJSON *code  = cJSON_GetObjectItemCaseSensitive(plan_obj, "code");
+        cJSON *title = cJSON_GetObjectItemCaseSensitive(plan_obj, "title");
+        cJSON *sum   = cJSON_GetObjectItemCaseSensitive(plan_obj, "summary");
+        fprintf(stdout, "Plan: %s · %s\n",
+                (code  && cJSON_IsString(code))  ? code->valuestring  : "?",
+                (title && cJSON_IsString(title)) ? title->valuestring : "?");
+        if (sum && cJSON_IsString(sum)) fprintf(stdout, "  %s\n", sum->valuestring);
+    }
+    if (cJSON_IsObject(phase_obj)) {
+        cJSON *label = cJSON_GetObjectItemCaseSensitive(phase_obj, "label");
+        cJSON *title = cJSON_GetObjectItemCaseSensitive(phase_obj, "title");
+        cJSON *sum   = cJSON_GetObjectItemCaseSensitive(phase_obj, "summary");
+        fprintf(stdout, "Phase: %s · %s\n",
+                (label && cJSON_IsString(label)) ? label->valuestring : "?",
+                (title && cJSON_IsString(title)) ? title->valuestring : "?");
+        if (sum && cJSON_IsString(sum)) fprintf(stdout, "  %s\n", sum->valuestring);
+    } else {
+        fprintf(stdout, "Phase: (none)\n");
+    }
+    if (cJSON_IsObject(task_obj)) {
+        cJSON *label = cJSON_GetObjectItemCaseSensitive(task_obj, "label");
+        cJSON *title = cJSON_GetObjectItemCaseSensitive(task_obj, "title");
+        cJSON *sum   = cJSON_GetObjectItemCaseSensitive(task_obj, "summary");
+        fprintf(stdout, "Task: %s · %s\n",
+                (label && cJSON_IsString(label)) ? label->valuestring : "?",
+                (title && cJSON_IsString(title)) ? title->valuestring : "?");
+        if (sum && cJSON_IsString(sum)) fprintf(stdout, "  %s\n", sum->valuestring);
+    } else {
+        fprintf(stdout, "Task: (none)\n");
+    }
+
+    fprintf(stdout, "\nInstructions:\n");
+    int instr_total = 0;
+    cJSON *scope_resp[3] = { plan_instr, phase_instr, task_instr };
+    const char *scope_lbl[3] = { "plan", "phase", "task" };
+    for (int i = 0; i < 3; i++) {
+        if (scope_resp[i] == NULL) continue;
+        cJSON *list = cJSON_GetObjectItemCaseSensitive(scope_resp[i], "instructions");
+        cJSON *it;
+        cJSON_ArrayForEach(it, list) {
+            cJSON *body = cJSON_GetObjectItemCaseSensitive(it, "body");
+            if (body && cJSON_IsString(body)) {
+                fprintf(stdout, "  [%s] %s\n", scope_lbl[i], body->valuestring);
+                instr_total++;
+            }
+        }
+    }
+    if (instr_total == 0) fprintf(stdout, "  (none)\n");
+
+    fprintf(stdout, "\nUp next (pending tasks):\n");
+    int up_total = 0;
+    if (pending != NULL) {
+        cJSON *list = cJSON_GetObjectItemCaseSensitive(pending, "tasks");
+        cJSON *t;
+        cJSON_ArrayForEach(t, list) {
+            cJSON *label = cJSON_GetObjectItemCaseSensitive(t, "label");
+            cJSON *title = cJSON_GetObjectItemCaseSensitive(t, "title");
+            fprintf(stdout, "  %s · %s\n",
+                    (label && cJSON_IsString(label)) ? label->valuestring : "?",
+                    (title && cJSON_IsString(title)) ? title->valuestring : "?");
+            up_total++;
+        }
+    }
+    if (up_total == 0) fprintf(stdout, "  (none)\n");
+
+    if (plan_obj)    cJSON_Delete(plan_obj);
+    if (phase_obj)   cJSON_Delete(phase_obj);
+    if (task_obj)    cJSON_Delete(task_obj);
+    if (plan_instr)  cJSON_Delete(plan_instr);
+    if (phase_instr) cJSON_Delete(phase_instr);
+    if (task_instr)  cJSON_Delete(task_instr);
+    if (pending)     cJSON_Delete(pending);
+    ipman_db_close(db);
+    return 0;
+}
+
 static int run_log(void) {
     char home[PATH_MAX], dbpath[PATH_MAX];
     sqlite3 *db = NULL;
@@ -1209,6 +1390,7 @@ int main(int argc, char **argv) {
     if (cmd != NULL && strcmp(cmd, "status") == 0) { return run_status(); }
     if (cmd != NULL && strcmp(cmd, "ls")     == 0) { return run_ls(); }
     if (cmd != NULL && strcmp(cmd, "log")    == 0) { return run_log(); }
+    if (cmd != NULL && strcmp(cmd, "next")   == 0) { return run_next(); }
     if (cmd != NULL && strcmp(cmd, "render") == 0) {
         if (argc < 3) {
             fprintf(stderr, "usage: ipman --render <plan>\n");
