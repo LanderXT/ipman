@@ -23,6 +23,7 @@ It is the missing piece for agents that already write good code but forget what 
 - [Two surfaces, one database](#two-surfaces-one-database)
 - [Concepts](#concepts)
 - [How agents discover the API](#how-agents-discover-the-api)
+- [MCP server (optional)](#mcp-server-optional)
 - [Security](#security)
 - [Human CLI reference](#human-cli-reference)
 - [Operations reference](#operations-reference)
@@ -225,6 +226,18 @@ The bundled skill at `.claude/skills/ipman/SKILL.md` instructs agents to read th
 
 The exit-code split lets agents distinguish "the request itself is broken — stop retrying" from "the request ran and reported a normal failure mode — read `error.code`".
 
+## MCP server (optional)
+
+A small Python adapter at [`mcp/ipman_mcp.py`](mcp/ipman_mcp.py) exposes every ipman operation as an MCP tool over JSON-RPC 2.0 with LSP-style framing. Use it from MCP-aware clients (Claude Desktop, Cursor, Continue, custom agent stacks) when you don't want them to pipe JSON to stdin themselves.
+
+```sh
+IPMAN_HOME=/path/to/project/.ipman \
+IPMAN_BIN=$(which ipman) \
+python3 mcp/ipman_mcp.py
+```
+
+The bridge reads `manifest.json` once at startup, builds one MCP tool per registered operation (62 of them after `ipman init`), and forwards `tools/call` invocations as JSON envelopes to the `ipman` binary. No third-party Python deps; Python 3.10+ required for the type-hint syntax. See [`mcp/README.md`](mcp/README.md) for client-config snippets and troubleshooting.
+
 ## Security
 
 `ipman.db` is encrypted at rest using **SQLCipher** (AES-256 page-level encryption) with a key derived from a per-workspace 32-byte random salt via **libsodium's Argon2id** KDF. Specifically:
@@ -338,6 +351,9 @@ ipman/
 │   └── unit/             # C unit tests
 ├── third_party/cjson/    # Vendored cJSON (tag-pinned)
 ├── .claude/skills/ipman/ # Bundled Claude Code skill (also baked into the binary)
+├── mcp/                  # Optional MCP server (Python adapter for MCP-aware clients)
+│   ├── ipman_mcp.py
+│   └── README.md
 ├── Makefile
 └── ipman-logo.png
 ```
@@ -353,6 +369,7 @@ The "single source of truth" pattern is deliberate: the dispatch table in `src/d
 - Encrypted SQLite storage layout
 - `.ipman/` generated documentation tree
 - Bundled Claude Code skill
+- Optional MCP server (`mcp/ipman_mcp.py`) for MCP-aware clients
 
 Planned (no commitment yet):
 
