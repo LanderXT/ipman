@@ -55,7 +55,7 @@ def _build_tool_list(manifest: dict) -> list:
 
 def _call_ipman(op: str, arguments: dict, request_id) -> dict:
     payload = {
-        "protocol_version": 1,
+        "protocol_version": 2,
         "request_id": str(request_id),
         "actor": "mcp",
         "op": op,
