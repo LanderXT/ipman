@@ -1142,22 +1142,26 @@ static void add_str_row(cli_table_t *t, const char *field, const cJSON *v) {
     cli_table_add_row(t, row);
 }
 
-/* Banner + Field/Value detail table for one cursor level. label_field is the
- * JSON key holding the human label ("code" for plans, "label" for phase/task);
- * include_priority adds the priority row (plans/tasks have it, phases don't).
- * When entity is NULL the banner reports "(none)" and no table is drawn. */
+/* Banner + Field/Value detail table for one cursor level. The banner prefers
+ * `code` (plans only) and falls back to `label` (phases/tasks) so v2.0
+ * responses, which dropped `code`, still get a meaningful identifier in the
+ * heading. include_priority adds the priority row (plans/tasks have it,
+ * phases don't). When entity is NULL the banner reports "(none)" and no
+ * table is drawn. */
 static void next_print_cursor(FILE *out, const char *kind,
-                              const char *label_field,
                               int include_priority,
                               const cJSON *entity) {
     if (!cJSON_IsObject(entity)) {
         fprintf(out, "%s: (none)\n", kind);
         return;
     }
-    cJSON *lbl   = cJSON_GetObjectItemCaseSensitive(entity, label_field);
+    cJSON *code  = cJSON_GetObjectItemCaseSensitive(entity, "code");
+    cJSON *label = cJSON_GetObjectItemCaseSensitive(entity, "label");
     cJSON *title = cJSON_GetObjectItemCaseSensitive(entity, "title");
-    fprintf(out, "%s: %s · %s\n", kind,
-            (lbl   && cJSON_IsString(lbl))   ? lbl->valuestring   : "?",
+    const char *id_str = "?";
+    if (code  && cJSON_IsString(code)  && code->valuestring[0]  != '\0') id_str = code->valuestring;
+    else if (label && cJSON_IsString(label) && label->valuestring[0] != '\0') id_str = label->valuestring;
+    fprintf(out, "%s: %s · %s\n", kind, id_str,
             (title && cJSON_IsString(title)) ? title->valuestring : "?");
 
     cli_table_t t;
@@ -1183,9 +1187,9 @@ static void next_render(const cJSON *plan_obj,
                         const cJSON *phase_instr,
                         const cJSON *task_instr,
                         const cJSON *pending) {
-    next_print_cursor(stdout, "Plan",  "code",  /*priority=*/1, plan_obj);
-    next_print_cursor(stdout, "Phase", "label", /*priority=*/0, phase_obj);
-    next_print_cursor(stdout, "Task",  "label", /*priority=*/1, task_obj);
+    next_print_cursor(stdout, "Plan",  /*priority=*/1, plan_obj);
+    next_print_cursor(stdout, "Phase", /*priority=*/0, phase_obj);
+    next_print_cursor(stdout, "Task",  /*priority=*/1, task_obj);
 
     fputs("\nInstructions\n", stdout);
     cli_table_t it;
