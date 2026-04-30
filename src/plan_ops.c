@@ -949,6 +949,41 @@ int ipman_op_plan_get(const ipman_request_t *req, sqlite3 *db,
     return 0;
 }
 
+const ipman_param_desc_t ipman_op_plan_lookup_params[] = {
+    { "uid" }, { "label" }, { "code" },
+    { NULL },
+};
+
+int ipman_op_plan_lookup(const ipman_request_t *req, sqlite3 *db,
+                        cJSON **result_out,
+                        ipman_error_code_t *err_code_out,
+                        const char **err_msg_out) {
+    if (cJSON_GetObjectItemCaseSensitive(req->params, "id") != NULL) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "id is not a valid lookup input; lookup resolves uid/label/code to id";
+        return -1;
+    }
+    if (cJSON_GetObjectItemCaseSensitive(req->params, "uid") == NULL &&
+        cJSON_GetObjectItemCaseSensitive(req->params, "label") == NULL &&
+        cJSON_GetObjectItemCaseSensitive(req->params, "code") == NULL) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "lookup requires one of: uid, label, code";
+        return -1;
+    }
+    sqlite3_int64 plan_id = 0;
+    if (read_plan_selector(db, req->params, &plan_id, err_code_out, err_msg_out) != 0) return -1;
+    cJSON *result = cJSON_CreateObject();
+    if (result == NULL ||
+        cJSON_AddNumberToObject(result, "id", (double)plan_id) == NULL) {
+        if (result != NULL) cJSON_Delete(result);
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to build lookup response";
+        return -1;
+    }
+    *result_out = result;
+    return 0;
+}
+
 const ipman_param_desc_t ipman_op_plan_update_params[] = {
     { "id" }, { "code" },
     { "title" }, { "summary" }, { "description" },
