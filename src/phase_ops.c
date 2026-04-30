@@ -1042,6 +1042,144 @@ int ipman_op_phase_get(const ipman_request_t *req, sqlite3 *db,
     return 0;
 }
 
+static int resolve_plan_scope(cJSON *params, sqlite3 *db,
+                              sqlite3_int64 *plan_id_out,
+                              ipman_error_code_t *err_code_out,
+                              const char **err_msg_out) {
+    cJSON *plan_id_item = cJSON_GetObjectItemCaseSensitive(params, "plan_id");
+    cJSON *plan_uid_item = cJSON_GetObjectItemCaseSensitive(params, "plan_uid");
+    cJSON *plan_label_item = cJSON_GetObjectItemCaseSensitive(params, "plan_label");
+
+    if (plan_id_item != NULL && cJSON_IsNumber(plan_id_item) &&
+        plan_id_item->valuedouble >= 1.0) {
+        *plan_id_out = (sqlite3_int64)plan_id_item->valuedouble;
+        return 0;
+    }
+
+    const char *sql = NULL;
+    const char *value = NULL;
+    const char *not_found_msg = NULL;
+    if (plan_uid_item != NULL && cJSON_IsString(plan_uid_item) &&
+        plan_uid_item->valuestring) {
+        sql = "SELECT id FROM plans WHERE uid = ?";
+        value = plan_uid_item->valuestring;
+        not_found_msg = "plan not found by plan_uid";
+    } else if (plan_label_item != NULL && cJSON_IsString(plan_label_item) &&
+               plan_label_item->valuestring) {
+        sql = "SELECT id FROM plans WHERE label = ?";
+        value = plan_label_item->valuestring;
+        not_found_msg = "plan not found by plan_label";
+    } else {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "phase label requires plan_id, plan_uid, or plan_label scope";
+        return -1;
+    }
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to resolve plan scope";
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, value, -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *plan_id_out = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+    sqlite3_finalize(stmt);
+    *err_code_out = IPMAN_ERR_NOT_FOUND;
+    *err_msg_out = not_found_msg;
+    return -1;
+}
+
+const ipman_param_desc_t ipman_op_phase_lookup_params[] = {
+    { "uid" }, { "label" },
+    { "plan_id" }, { "plan_uid" }, { "plan_label" },
+    { NULL },
+};
+
+int ipman_op_phase_lookup(const ipman_request_t *req, sqlite3 *db,
+                         cJSON **result_out,
+                         ipman_error_code_t *err_code_out,
+                         const char **err_msg_out) {
+    if (cJSON_GetObjectItemCaseSensitive(req->params, "id") != NULL) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "id is not a valid lookup input; lookup resolves uid/label to id";
+        return -1;
+    }
+    cJSON *uid_item = cJSON_GetObjectItemCaseSensitive(req->params, "uid");
+    cJSON *label_item = cJSON_GetObjectItemCaseSensitive(req->params, "label");
+    int has_uid = uid_item != NULL && cJSON_IsString(uid_item) &&
+                  uid_item->valuestring && uid_item->valuestring[0] != '\0';
+    int has_label = label_item != NULL && cJSON_IsString(label_item) &&
+                    label_item->valuestring && label_item->valuestring[0] != '\0';
+    if (!has_uid && !has_label) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "lookup requires uid or label";
+        return -1;
+    }
+
+    sqlite3_int64 phase_id = 0;
+    if (has_uid) {
+        sqlite3_stmt *stmt;
+        int rc = sqlite3_prepare_v2(db, "SELECT id FROM phases WHERE uid = ?",
+                                    -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            *err_code_out = IPMAN_ERR_INTERNAL;
+            *err_msg_out = "failed to prepare phase lookup";
+            return -1;
+        }
+        sqlite3_bind_text(stmt, 1, uid_item->valuestring, -1, SQLITE_STATIC);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            *err_code_out = IPMAN_ERR_NOT_FOUND;
+            *err_msg_out = "phase not found by uid";
+            return -1;
+        }
+        phase_id = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+    } else {
+        sqlite3_int64 plan_id = 0;
+        if (resolve_plan_scope(req->params, db, &plan_id,
+                               err_code_out, err_msg_out) != 0) return -1;
+        sqlite3_stmt *stmt;
+        int rc = sqlite3_prepare_v2(db,
+            "SELECT id FROM phases WHERE label = ? AND plan_id = ?",
+            -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            *err_code_out = IPMAN_ERR_INTERNAL;
+            *err_msg_out = "failed to prepare phase lookup";
+            return -1;
+        }
+        sqlite3_bind_text(stmt, 1, label_item->valuestring, -1, SQLITE_STATIC);
+        sqlite3_bind_int64(stmt, 2, plan_id);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            *err_code_out = IPMAN_ERR_NOT_FOUND;
+            *err_msg_out = "phase not found by label";
+            return -1;
+        }
+        phase_id = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+    }
+
+    cJSON *result = cJSON_CreateObject();
+    if (result == NULL ||
+        cJSON_AddNumberToObject(result, "id", (double)phase_id) == NULL) {
+        if (result != NULL) cJSON_Delete(result);
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to build lookup response";
+        return -1;
+    }
+    *result_out = result;
+    return 0;
+}
+
 static void bind_update_text(sqlite3_stmt *stmt,
                              int flag_index,
                              int value_index,

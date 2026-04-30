@@ -27,6 +27,10 @@ int ipman_op_phase_get(const ipman_request_t *req, sqlite3 *db,
                       cJSON **result_out,
                       ipman_error_code_t *err_code_out,
                       const char **err_msg_out);
+int ipman_op_phase_lookup(const ipman_request_t *req, sqlite3 *db,
+                         cJSON **result_out,
+                         ipman_error_code_t *err_code_out,
+                         const char **err_msg_out);
 int ipman_op_phase_update(const ipman_request_t *req, sqlite3 *db,
                          cJSON **result_out,
                          ipman_error_code_t *err_code_out,
@@ -62,6 +66,7 @@ int ipman_op_phase_progress(const ipman_request_t *req, sqlite3 *db,
 
 extern const ipman_param_desc_t ipman_op_phase_create_params[];
 extern const ipman_param_desc_t ipman_op_phase_get_params[];
+extern const ipman_param_desc_t ipman_op_phase_lookup_params[];
 extern const ipman_param_desc_t ipman_op_phase_update_params[];
 extern const ipman_param_desc_t ipman_op_phase_move_params[];
 extern const ipman_param_desc_t ipman_op_phase_close_params[];
