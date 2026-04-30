@@ -85,22 +85,6 @@ static int current_version(sqlite3 *db, int *out) {
     return 0;
 }
 
-static int migration_checksum_matches(const struct ipman_migration *m,
-                                      const char *stored) {
-    if (stored == NULL) return 0;
-    if (strcmp(stored, m->checksum) == 0) return 1;
-
-    /* Compatibility for databases created with an earlier 0007 build. */
-    if (m->version == 7 &&
-        strcmp(m->name, "0007_task_relations") == 0 &&
-        strcmp(stored,
-               "ace5f472c5ada1da853103392ddf0d2c4e6fcf430609bf527d7b6f3762e0c3cc") == 0) {
-        return 1;
-    }
-
-    return 0;
-}
-
 static int verify_applied_checksums(sqlite3 *db) {
     const char *sql =
         "SELECT version, checksum FROM schema_metadata ORDER BY version;";
@@ -126,7 +110,7 @@ static int verify_applied_checksums(sqlite3 *db) {
             result = -1;
             break;
         }
-        if (!migration_checksum_matches(m, (const char *)stored)) {
+        if (stored == NULL || strcmp((const char *)stored, m->checksum) != 0) {
             ipman_log_error("migration checksum mismatch",
                            "version=%d name=%s stored=%s embedded=%s",
                            v, m->name,
@@ -148,29 +132,11 @@ static int verify_applied_checksums(sqlite3 *db) {
 
 static int apply_one(sqlite3 *db, const struct ipman_migration *m) {
     char *err = NULL;
-    int restore_foreign_keys = 0;
-    /* These rebuild `events`, which is referenced by closure_records. */
-    if (m->version == 9 || m->version == 10 ||
-        m->version == 11 || m->version == 13 ||
-        m->version == 14 || m->version == 19) {
-        int rc_fk = sqlite3_exec(db, "PRAGMA foreign_keys=OFF;", NULL, NULL, &err);
-        if (rc_fk != SQLITE_OK) {
-            ipman_log_error("disable foreign_keys failed",
-                           "version=%d rc=%d detail=\"%s\"",
-                           m->version, rc_fk, err ? err : "(null)");
-            sqlite3_free(err);
-            return -1;
-        }
-        restore_foreign_keys = 1;
-    }
     int rc = sqlite3_exec(db, "BEGIN IMMEDIATE;", NULL, NULL, &err);
     if (rc != SQLITE_OK) {
         ipman_log_error("BEGIN failed", "version=%d rc=%d detail=\"%s\"",
                        m->version, rc, err ? err : "(null)");
         sqlite3_free(err);
-        if (restore_foreign_keys) {
-            sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, NULL);
-        }
         return -1;
     }
 
@@ -181,17 +147,11 @@ static int apply_one(sqlite3 *db, const struct ipman_migration *m) {
                        m->version, m->name, rc, err ? err : "(null)");
         sqlite3_free(err);
         sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
-        if (restore_foreign_keys) {
-            sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, NULL);
-        }
         return -1;
     }
 
     if (insert_schema_metadata(db, m) != 0) {
         sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
-        if (restore_foreign_keys) {
-            sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, NULL);
-        }
         return -1;
     }
 
@@ -202,40 +162,7 @@ static int apply_one(sqlite3 *db, const struct ipman_migration *m) {
                        m->version, rc, err ? err : "(null)");
         sqlite3_free(err);
         sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
-        if (restore_foreign_keys) {
-            sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, NULL);
-        }
         return -1;
-    }
-    if (restore_foreign_keys) {
-        rc = sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, &err);
-        if (rc != SQLITE_OK) {
-            ipman_log_error("restore foreign_keys failed",
-                           "version=%d rc=%d detail=\"%s\"",
-                           m->version, rc, err ? err : "(null)");
-            sqlite3_free(err);
-            return -1;
-        }
-        sqlite3_stmt *fk_stmt = NULL;
-        rc = sqlite3_prepare_v2(db, "PRAGMA foreign_key_check;", -1, &fk_stmt, NULL);
-        if (rc != SQLITE_OK) {
-            ipman_log_error("foreign_key_check prepare failed",
-                           "version=%d rc=%d", m->version, rc);
-            return -1;
-        }
-        rc = sqlite3_step(fk_stmt);
-        sqlite3_finalize(fk_stmt);
-        if (rc == SQLITE_ROW) {
-            ipman_log_error("foreign_key_check failed",
-                           "version=%d detail=\"FK violations detected\"",
-                           m->version);
-            return -1;
-        }
-        if (rc != SQLITE_DONE) {
-            ipman_log_error("foreign_key_check step failed",
-                           "version=%d rc=%d", m->version, rc);
-            return -1;
-        }
     }
     ipman_log_info("applied migration",
                   "version=%d name=%s", m->version, m->name);
