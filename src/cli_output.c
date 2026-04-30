@@ -34,13 +34,14 @@ static void print_border(FILE *out, const cli_table_t *t,
 static void print_header_row(FILE *out, const cli_table_t *t) {
     fputs(k_v, out);
     for (int c = 0; c < t->col_count; c++) {
-        int w   = t->col_width[c];
-        int len = (int)strlen(t->headers[c]);
-        int lpad = (w - len) / 2;
-        int rpad = w - len - lpad;
+        int         w    = t->col_width[c];
+        const char *h    = t->headers[c] ? t->headers[c] : "";
+        int         len  = (int)strlen(h);
+        int         lpad = (w - len) / 2;
+        int         rpad = w - len - lpad;
         fputc(' ', out);
         for (int i = 0; i < lpad; i++) fputc(' ', out);
-        fputs(t->headers[c], out);
+        fputs(h, out);
         for (int i = 0; i < rpad; i++) fputc(' ', out);
         fputc(' ', out);
         fputs(k_v, out);
@@ -67,8 +68,9 @@ void cli_table_init(cli_table_t *t, int col_count, const char * const *headers) 
     memset(t, 0, sizeof *t);
     t->col_count = col_count < CLI_TABLE_MAX_COLS ? col_count : CLI_TABLE_MAX_COLS;
     for (int c = 0; c < t->col_count; c++) {
-        t->headers[c]   = strdup(headers[c] ? headers[c] : "");
-        t->col_width[c] = (int)strlen(t->headers[c]);
+        const char *h  = headers[c] ? headers[c] : "";
+        t->headers[c]  = strdup(h);
+        t->col_width[c] = (int)strlen(h);
     }
 }
 
