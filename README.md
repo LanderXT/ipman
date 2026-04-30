@@ -155,13 +155,15 @@ Plan ── one per implementation effort, holds outcome and tags
       └── Task ── atomic units of work; carry status, type, priority, origin
 ```
 
-Every entity has three name-like fields, each with a distinct purpose:
+Every entity carries identifier fields that fall into **three layers**: the row's identity, the handles you reference it by, and the breadcrumb that shows it on screen.
 
-| Field | Example | When to use |
+| Layer | Field(s) | What it is and when to use it |
 |---|---|---|
-| `uid` | `task_42` | Stable agent-to-agent reference. Never reused. |
-| `label` | `move-jwt-verification` | Human-readable slug, scoped per parent. Scoped lookups need the parent. |
-| `code` / `ref` | `P1`, `P1/F3` | Display-only. Do not pass `ref` as a selector in API calls. |
+| **Identity** | `id` | The internal SQLite primary key (e.g. `42`). Use when an op asks for `id`. Workspace-scoped — two workspaces both have a `task_1`. |
+| **Handles** | `uid`, `label`, `code` | Three ways an op can accept the entity as a selector. `uid` (`task_42`) is type-prefixed and immutable — preferred for agent-to-agent references. `label` (`move-jwt-verification`) is a human-friendly slug, scoped per parent and renameable — preferred in prose and comments. `code` (`P1`) exists only on plans — short shorthand for the most-referenced entity. |
+| **Breadcrumb** | `entity_ref` (and `*_ref` variants) | Computed at read time, emitted on `event.list` results and task relations as `P1`, `P1/F3`, `P1/T7`. Output-only: derived from mutable upstream state (`phase.move` rewrites `P1/F3` → `P1/F2`), so do not store it and **do not pass it back as a selector**. |
+
+Quick guide: pass `uid` between agents and across sessions; type `label` in comments; show `entity_ref` to humans.
 
 ### Status, resolution, and origin are different things
 
