@@ -274,6 +274,59 @@ static int read_plan_selector(sqlite3 *db, cJSON *params,
     return -1;
 }
 
+int ipman_resolve_plan_scope(cJSON *params, sqlite3 *db,
+                             sqlite3_int64 *plan_id_out,
+                             ipman_error_code_t *err_code_out,
+                             const char **err_msg_out) {
+    cJSON *plan_id_item = cJSON_GetObjectItemCaseSensitive(params, "plan_id");
+    cJSON *plan_uid_item = cJSON_GetObjectItemCaseSensitive(params, "plan_uid");
+    cJSON *plan_label_item = cJSON_GetObjectItemCaseSensitive(params, "plan_label");
+
+    if (plan_id_item != NULL && cJSON_IsNumber(plan_id_item) &&
+        plan_id_item->valuedouble >= 1.0) {
+        *plan_id_out = (sqlite3_int64)plan_id_item->valuedouble;
+        return 0;
+    }
+
+    const char *sql = NULL;
+    const char *value = NULL;
+    const char *not_found_msg = NULL;
+    if (plan_uid_item != NULL && cJSON_IsString(plan_uid_item) &&
+        plan_uid_item->valuestring) {
+        sql = "SELECT id FROM plans WHERE uid = ?";
+        value = plan_uid_item->valuestring;
+        not_found_msg = "plan not found by plan_uid";
+    } else if (plan_label_item != NULL && cJSON_IsString(plan_label_item) &&
+               plan_label_item->valuestring) {
+        sql = "SELECT id FROM plans WHERE label = ?";
+        value = plan_label_item->valuestring;
+        not_found_msg = "plan not found by plan_label";
+    } else {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "plan scope required (plan_id, plan_uid, or plan_label)";
+        return -1;
+    }
+
+    sqlite3_stmt *stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to resolve plan scope";
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, value, -1, SQLITE_STATIC);
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *plan_id_out = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+    sqlite3_finalize(stmt);
+    *err_code_out = IPMAN_ERR_NOT_FOUND;
+    *err_msg_out = not_found_msg;
+    return -1;
+}
+
 static int read_optional_since(cJSON *params,
                                sqlite3_int64 *since_out,
                                ipman_error_code_t *err_code_out,

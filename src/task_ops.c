@@ -8,6 +8,7 @@
 #include "event_ops.h"
 #include "json_helpers.h"
 #include "log.h"
+#include "plan_ops.h"
 #include "validation.h"
 
 #include <stdio.h>
@@ -1886,6 +1887,91 @@ int ipman_op_task_get(const ipman_request_t *req, sqlite3 *db,
         cJSON_Delete(task);
         *err_code_out = IPMAN_ERR_INTERNAL;
         *err_msg_out = "failed to build task response";
+        return -1;
+    }
+    *result_out = result;
+    return 0;
+}
+
+const ipman_param_desc_t ipman_op_task_lookup_params[] = {
+    { "uid" }, { "label" },
+    { "plan_id" }, { "plan_uid" }, { "plan_label" },
+    { NULL },
+};
+
+int ipman_op_task_lookup(const ipman_request_t *req, sqlite3 *db,
+                        cJSON **result_out,
+                        ipman_error_code_t *err_code_out,
+                        const char **err_msg_out) {
+    if (cJSON_GetObjectItemCaseSensitive(req->params, "id") != NULL) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "id is not a valid lookup input; lookup resolves uid/label to id";
+        return -1;
+    }
+    cJSON *uid_item = cJSON_GetObjectItemCaseSensitive(req->params, "uid");
+    cJSON *label_item = cJSON_GetObjectItemCaseSensitive(req->params, "label");
+    int has_uid = uid_item != NULL && cJSON_IsString(uid_item) &&
+                  uid_item->valuestring && uid_item->valuestring[0] != '\0';
+    int has_label = label_item != NULL && cJSON_IsString(label_item) &&
+                    label_item->valuestring && label_item->valuestring[0] != '\0';
+    if (!has_uid && !has_label) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "lookup requires uid or label";
+        return -1;
+    }
+
+    sqlite3_int64 task_id = 0;
+    if (has_uid) {
+        sqlite3_stmt *stmt;
+        int rc = sqlite3_prepare_v2(db, "SELECT id FROM tasks WHERE uid = ?",
+                                    -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            *err_code_out = IPMAN_ERR_INTERNAL;
+            *err_msg_out = "failed to prepare task lookup";
+            return -1;
+        }
+        sqlite3_bind_text(stmt, 1, uid_item->valuestring, -1, SQLITE_STATIC);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            *err_code_out = IPMAN_ERR_NOT_FOUND;
+            *err_msg_out = "task not found by uid";
+            return -1;
+        }
+        task_id = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+    } else {
+        sqlite3_int64 plan_id = 0;
+        if (ipman_resolve_plan_scope(req->params, db, &plan_id,
+                                     err_code_out, err_msg_out) != 0) return -1;
+        sqlite3_stmt *stmt;
+        int rc = sqlite3_prepare_v2(db,
+            "SELECT id FROM tasks WHERE label = ? AND plan_id = ?",
+            -1, &stmt, NULL);
+        if (rc != SQLITE_OK) {
+            *err_code_out = IPMAN_ERR_INTERNAL;
+            *err_msg_out = "failed to prepare task lookup";
+            return -1;
+        }
+        sqlite3_bind_text(stmt, 1, label_item->valuestring, -1, SQLITE_STATIC);
+        sqlite3_bind_int64(stmt, 2, plan_id);
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_ROW) {
+            sqlite3_finalize(stmt);
+            *err_code_out = IPMAN_ERR_NOT_FOUND;
+            *err_msg_out = "task not found by label";
+            return -1;
+        }
+        task_id = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+    }
+
+    cJSON *result = cJSON_CreateObject();
+    if (result == NULL ||
+        cJSON_AddNumberToObject(result, "id", (double)task_id) == NULL) {
+        if (result != NULL) cJSON_Delete(result);
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to build lookup response";
         return -1;
     }
     *result_out = result;

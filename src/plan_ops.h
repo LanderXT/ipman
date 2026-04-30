@@ -7,6 +7,18 @@
 
 #include "dispatch.h"
 
+/*
+ * Resolve a plan scope from plan_id, plan_uid, or plan_label keys
+ * (plan_id wins when valid, then plan_uid, then plan_label). Used by
+ * the *.lookup ops to translate child-entity scopes to a plan_id.
+ * Reports validation_failed if no scope key is provided and not_found
+ * if the referenced plan does not exist.
+ */
+int ipman_resolve_plan_scope(cJSON *params, sqlite3 *db,
+                             sqlite3_int64 *plan_id_out,
+                             ipman_error_code_t *err_code_out,
+                             const char **err_msg_out);
+
 int ipman_op_plan_create(const ipman_request_t *req, sqlite3 *db,
                          cJSON **result_out,
                          ipman_error_code_t *err_code_out,

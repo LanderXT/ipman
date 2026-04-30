@@ -27,6 +27,10 @@ int ipman_op_task_get(const ipman_request_t *req, sqlite3 *db,
                      cJSON **result_out,
                      ipman_error_code_t *err_code_out,
                      const char **err_msg_out);
+int ipman_op_task_lookup(const ipman_request_t *req, sqlite3 *db,
+                        cJSON **result_out,
+                        ipman_error_code_t *err_code_out,
+                        const char **err_msg_out);
 int ipman_op_task_update(const ipman_request_t *req, sqlite3 *db,
                         cJSON **result_out,
                         ipman_error_code_t *err_code_out,
@@ -106,6 +110,7 @@ int ipman_op_task_reopen(const ipman_request_t *req, sqlite3 *db,
 
 extern const ipman_param_desc_t ipman_op_task_create_params[];
 extern const ipman_param_desc_t ipman_op_task_get_params[];
+extern const ipman_param_desc_t ipman_op_task_lookup_params[];
 extern const ipman_param_desc_t ipman_op_task_update_params[];
 extern const ipman_param_desc_t ipman_op_task_move_params[];
 extern const ipman_param_desc_t ipman_op_task_list_params[];
