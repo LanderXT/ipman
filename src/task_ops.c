@@ -865,10 +865,8 @@ cJSON *ipman_task_from_row(sqlite3_stmt *stmt) {
     sqlite3_int64 plan_id   = sqlite3_column_int64(stmt, 1);
     sqlite3_int64 local_seq = sqlite3_column_int64(stmt, 27);
 
-    /* uid/label first; numeric ids follow. */
-    ipman_json_add_text_or_null(task, "uid",   sqlite3_column_text(stmt, 28));
-    ipman_json_add_text_or_null(task, "label", sqlite3_column_text(stmt, 29));
     cJSON_AddNumberToObject(task, "id", (double)sqlite3_column_int64(stmt, 0));
+    ipman_json_add_text_or_null(task, "label", sqlite3_column_text(stmt, 29));
     cJSON_AddNumberToObject(task, "plan_id", (double)plan_id);
     ipman_json_add_int64_or_null(task, "phase_id", stmt, 2);
     ipman_json_add_int64_or_null(task, "parent_task_id", stmt, 3);
