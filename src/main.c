@@ -1131,11 +1131,115 @@ static int run_activate(const char *selector) {
     return 0;
 }
 
+/* Add a Field/Value row to t when v is a non-empty string. JSON null,
+ * non-strings and empty strings are skipped — matches the run_show
+ * convention of hiding fields that are not meaningfully populated. */
+static void add_str_row(cli_table_t *t, const char *field, const cJSON *v) {
+    if (v == NULL || !cJSON_IsString(v)) return;
+    const char *s = v->valuestring;
+    if (s == NULL || s[0] == '\0') return;
+    const char *row[] = { field, s };
+    cli_table_add_row(t, row);
+}
+
+/* Banner + Field/Value detail table for one cursor level. label_field is the
+ * JSON key holding the human label ("code" for plans, "label" for phase/task);
+ * include_priority adds the priority row (plans/tasks have it, phases don't).
+ * When entity is NULL the banner reports "(none)" and no table is drawn. */
+static void next_print_cursor(FILE *out, const char *kind,
+                              const char *label_field,
+                              int include_priority,
+                              const cJSON *entity) {
+    if (!cJSON_IsObject(entity)) {
+        fprintf(out, "%s: (none)\n", kind);
+        return;
+    }
+    cJSON *lbl   = cJSON_GetObjectItemCaseSensitive(entity, label_field);
+    cJSON *title = cJSON_GetObjectItemCaseSensitive(entity, "title");
+    fprintf(out, "%s: %s · %s\n", kind,
+            (lbl   && cJSON_IsString(lbl))   ? lbl->valuestring   : "?",
+            (title && cJSON_IsString(title)) ? title->valuestring : "?");
+
+    cli_table_t t;
+    const char *headers[] = {"Field", "Value"};
+    cli_table_init(&t, 2, headers);
+    add_str_row(&t, "Status",      cJSON_GetObjectItemCaseSensitive(entity, "status"));
+    if (include_priority)
+        add_str_row(&t, "Priority", cJSON_GetObjectItemCaseSensitive(entity, "priority"));
+    add_str_row(&t, "Summary",     cJSON_GetObjectItemCaseSensitive(entity, "summary"));
+    add_str_row(&t, "Description", cJSON_GetObjectItemCaseSensitive(entity, "description"));
+    cli_table_print(&t, out);
+    cli_table_free(&t);
+}
+
+/* Section renderer for --next: plan banner + per-cursor Field/Value tables,
+ * a unified instructions table with a Scope column, and an Up next table
+ * matching --ls. Helper kept separate from run_next so the data-fetch
+ * pipeline above is not entangled with rendering choices. */
+static void next_render(const cJSON *plan_obj,
+                        const cJSON *phase_obj,
+                        const cJSON *task_obj,
+                        const cJSON *plan_instr,
+                        const cJSON *phase_instr,
+                        const cJSON *task_instr,
+                        const cJSON *pending) {
+    next_print_cursor(stdout, "Plan",  "code",  /*priority=*/1, plan_obj);
+    next_print_cursor(stdout, "Phase", "label", /*priority=*/0, phase_obj);
+    next_print_cursor(stdout, "Task",  "label", /*priority=*/1, task_obj);
+
+    fputs("\nInstructions\n", stdout);
+    cli_table_t it;
+    const char *ihdr[] = {"Scope", "Type", "Body"};
+    cli_table_init(&it, 3, ihdr);
+    const cJSON *scopes[3] = { plan_instr, phase_instr, task_instr };
+    const char  *labels[3] = { "plan", "phase", "task" };
+    for (int i = 0; i < 3; i++) {
+        if (scopes[i] == NULL) continue;
+        const cJSON *list = cJSON_GetObjectItemCaseSensitive(scopes[i], "instructions");
+        const cJSON *entry;
+        cJSON_ArrayForEach(entry, list) {
+            cJSON *body  = cJSON_GetObjectItemCaseSensitive(entry, "body");
+            cJSON *itype = cJSON_GetObjectItemCaseSensitive(entry, "instruction_type");
+            const char *row[] = {
+                labels[i],
+                (itype && cJSON_IsString(itype)) ? itype->valuestring : "",
+                (body  && cJSON_IsString(body))  ? body->valuestring  : "",
+            };
+            cli_table_add_row(&it, row);
+        }
+    }
+    cli_table_print(&it, stdout);
+    cli_table_free(&it);
+
+    fputs("\nUp next (pending)\n", stdout);
+    cli_table_t up;
+    const char *uhdr[] = {"Label", "Priority", "Status", "Title"};
+    cli_table_init(&up, 4, uhdr);
+    if (pending != NULL) {
+        const cJSON *list = cJSON_GetObjectItemCaseSensitive(pending, "tasks");
+        const cJSON *t;
+        cJSON_ArrayForEach(t, list) {
+            cJSON *label    = cJSON_GetObjectItemCaseSensitive(t, "label");
+            cJSON *priority = cJSON_GetObjectItemCaseSensitive(t, "priority");
+            cJSON *status   = cJSON_GetObjectItemCaseSensitive(t, "status");
+            cJSON *title    = cJSON_GetObjectItemCaseSensitive(t, "title");
+            const char *row[] = {
+                (label    && cJSON_IsString(label))    ? label->valuestring    : "",
+                (priority && cJSON_IsString(priority)) ? priority->valuestring : "",
+                (status   && cJSON_IsString(status))   ? status->valuestring   : "",
+                (title    && cJSON_IsString(title))    ? title->valuestring    : "",
+            };
+            cli_table_add_row(&up, row);
+        }
+    }
+    cli_table_print(&up, stdout);
+    cli_table_free(&up);
+}
+
 /* --next: combined read-only view that replaces the typical agent
  * handoff sequence (workspace.context_get + plan/phase/task.get +
  * instruction.list per scope + task.list pending) with a single CLI
- * call. T3.1 fetches the data and renders a minimal line-based view;
- * T3.2 will replace the rendering with grouped cli_table output. */
+ * call. */
 static int run_next(void) {
     char home[PATH_MAX], dbpath[PATH_MAX];
     sqlite3 *db = NULL;
@@ -1232,72 +1336,9 @@ static int run_next(void) {
         cJSON_Delete(p);
     }
 
-    /* ---- Render (T3.1: line-based; T3.2 will replace with cli_table) ---- */
-    if (cJSON_IsObject(plan_obj)) {
-        cJSON *code  = cJSON_GetObjectItemCaseSensitive(plan_obj, "code");
-        cJSON *title = cJSON_GetObjectItemCaseSensitive(plan_obj, "title");
-        cJSON *sum   = cJSON_GetObjectItemCaseSensitive(plan_obj, "summary");
-        fprintf(stdout, "Plan: %s · %s\n",
-                (code  && cJSON_IsString(code))  ? code->valuestring  : "?",
-                (title && cJSON_IsString(title)) ? title->valuestring : "?");
-        if (sum && cJSON_IsString(sum)) fprintf(stdout, "  %s\n", sum->valuestring);
-    }
-    if (cJSON_IsObject(phase_obj)) {
-        cJSON *label = cJSON_GetObjectItemCaseSensitive(phase_obj, "label");
-        cJSON *title = cJSON_GetObjectItemCaseSensitive(phase_obj, "title");
-        cJSON *sum   = cJSON_GetObjectItemCaseSensitive(phase_obj, "summary");
-        fprintf(stdout, "Phase: %s · %s\n",
-                (label && cJSON_IsString(label)) ? label->valuestring : "?",
-                (title && cJSON_IsString(title)) ? title->valuestring : "?");
-        if (sum && cJSON_IsString(sum)) fprintf(stdout, "  %s\n", sum->valuestring);
-    } else {
-        fprintf(stdout, "Phase: (none)\n");
-    }
-    if (cJSON_IsObject(task_obj)) {
-        cJSON *label = cJSON_GetObjectItemCaseSensitive(task_obj, "label");
-        cJSON *title = cJSON_GetObjectItemCaseSensitive(task_obj, "title");
-        cJSON *sum   = cJSON_GetObjectItemCaseSensitive(task_obj, "summary");
-        fprintf(stdout, "Task: %s · %s\n",
-                (label && cJSON_IsString(label)) ? label->valuestring : "?",
-                (title && cJSON_IsString(title)) ? title->valuestring : "?");
-        if (sum && cJSON_IsString(sum)) fprintf(stdout, "  %s\n", sum->valuestring);
-    } else {
-        fprintf(stdout, "Task: (none)\n");
-    }
-
-    fprintf(stdout, "\nInstructions:\n");
-    int instr_total = 0;
-    cJSON *scope_resp[3] = { plan_instr, phase_instr, task_instr };
-    const char *scope_lbl[3] = { "plan", "phase", "task" };
-    for (int i = 0; i < 3; i++) {
-        if (scope_resp[i] == NULL) continue;
-        cJSON *list = cJSON_GetObjectItemCaseSensitive(scope_resp[i], "instructions");
-        cJSON *it;
-        cJSON_ArrayForEach(it, list) {
-            cJSON *body = cJSON_GetObjectItemCaseSensitive(it, "body");
-            if (body && cJSON_IsString(body)) {
-                fprintf(stdout, "  [%s] %s\n", scope_lbl[i], body->valuestring);
-                instr_total++;
-            }
-        }
-    }
-    if (instr_total == 0) fprintf(stdout, "  (none)\n");
-
-    fprintf(stdout, "\nUp next (pending tasks):\n");
-    int up_total = 0;
-    if (pending != NULL) {
-        cJSON *list = cJSON_GetObjectItemCaseSensitive(pending, "tasks");
-        cJSON *t;
-        cJSON_ArrayForEach(t, list) {
-            cJSON *label = cJSON_GetObjectItemCaseSensitive(t, "label");
-            cJSON *title = cJSON_GetObjectItemCaseSensitive(t, "title");
-            fprintf(stdout, "  %s · %s\n",
-                    (label && cJSON_IsString(label)) ? label->valuestring : "?",
-                    (title && cJSON_IsString(title)) ? title->valuestring : "?");
-            up_total++;
-        }
-    }
-    if (up_total == 0) fprintf(stdout, "  (none)\n");
+    next_render(plan_obj, phase_obj, task_obj,
+                plan_instr, phase_instr, task_instr,
+                pending);
 
     if (plan_obj)    cJSON_Delete(plan_obj);
     if (phase_obj)   cJSON_Delete(phase_obj);
