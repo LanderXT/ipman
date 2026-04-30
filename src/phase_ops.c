@@ -111,81 +111,20 @@ int ipman_read_phase_selector(cJSON *params, sqlite3 *db,
                              sqlite3_int64 *phase_id_out,
                              ipman_error_code_t *err_code_out,
                              const char **err_msg_out) {
-    cJSON *uid_item   = cJSON_GetObjectItemCaseSensitive(params, "uid");
-    cJSON *id_item    = cJSON_GetObjectItemCaseSensitive(params, "id");
-    cJSON *label_item = cJSON_GetObjectItemCaseSensitive(params, "label");
-
-    if (uid_item && cJSON_IsString(uid_item) && uid_item->valuestring) {
-        sqlite3_stmt *stmt;
-        int rc = sqlite3_prepare_v2(db, "SELECT id FROM phases WHERE uid = ?", -1, &stmt, NULL);
-        if (rc == SQLITE_OK) {
-            sqlite3_bind_text(stmt, 1, uid_item->valuestring, -1, SQLITE_STATIC);
-            rc = sqlite3_step(stmt);
-            if (rc == SQLITE_ROW) {
-                *phase_id_out = sqlite3_column_int64(stmt, 0);
-                sqlite3_finalize(stmt);
-                return 0;
-            }
-            sqlite3_finalize(stmt);
-        }
-        *err_code_out = IPMAN_ERR_NOT_FOUND;
-        *err_msg_out = "phase not found by uid";
+    (void)db;
+    cJSON *id_item = cJSON_GetObjectItemCaseSensitive(params, "id");
+    if (!id_item || !cJSON_IsNumber(id_item)) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "id required (use phase.lookup to resolve uid/label to id)";
         return -1;
     }
-
-    if (id_item != NULL && cJSON_IsNumber(id_item)) {
-        if (id_item->valuedouble < 1.0) {
-            *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-            *err_msg_out = "id must be a positive integer";
-            return -1;
-        }
-        *phase_id_out = (sqlite3_int64)id_item->valuedouble;
-        return 0;
-    }
-
-    if (label_item && cJSON_IsString(label_item) && label_item->valuestring) {
-        cJSON *plan_uid = cJSON_GetObjectItemCaseSensitive(params, "plan_uid");
-        cJSON *plan_label = cJSON_GetObjectItemCaseSensitive(params, "plan_label");
-
-        const char *sql = NULL;
-        if (plan_uid && cJSON_IsString(plan_uid)) {
-            sql = "SELECT phases.id FROM phases JOIN plans ON phases.plan_id = plans.id WHERE phases.label = ? AND plans.uid = ?";
-        } else if (plan_label && cJSON_IsString(plan_label)) {
-            sql = "SELECT phases.id FROM phases JOIN plans ON phases.plan_id = plans.id WHERE phases.label = ? AND plans.label = ?";
-        } else {
-            *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-            *err_msg_out = "phase label requires plan_uid or plan_label scope";
-            return -1;
-        }
-
-        sqlite3_stmt *stmt;
-        int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
-        if (rc == SQLITE_OK) {
-            sqlite3_bind_text(stmt, 1, label_item->valuestring, -1, SQLITE_STATIC);
-            sqlite3_bind_text(stmt, 2, plan_uid ? plan_uid->valuestring : plan_label->valuestring, -1, SQLITE_STATIC);
-            rc = sqlite3_step(stmt);
-            if (rc == SQLITE_ROW) {
-                *phase_id_out = sqlite3_column_int64(stmt, 0);
-                rc = sqlite3_step(stmt);
-                if (rc == SQLITE_ROW) {
-                    sqlite3_finalize(stmt);
-                    *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-                    *err_msg_out = "ambiguous phase label";
-                    return -1;
-                }
-                sqlite3_finalize(stmt);
-                return 0;
-            }
-            sqlite3_finalize(stmt);
-        }
-        *err_code_out = IPMAN_ERR_NOT_FOUND;
-        *err_msg_out = "phase not found by label";
+    if (id_item->valuedouble < 1.0) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "id must be a positive integer";
         return -1;
     }
-
-    *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-    *err_msg_out = "uid, id, or label is required";
-    return -1;
+    *phase_id_out = (sqlite3_int64)id_item->valuedouble;
+    return 0;
 }
 
 static int read_phase_list_tasks_id(cJSON *params,
@@ -193,29 +132,26 @@ static int read_phase_list_tasks_id(cJSON *params,
                                     sqlite3_int64 *phase_id_out,
                                     ipman_error_code_t *err_code_out,
                                     const char **err_msg_out) {
+    (void)db;
     cJSON *id = cJSON_GetObjectItemCaseSensitive(params, "id");
-    cJSON *uid = cJSON_GetObjectItemCaseSensitive(params, "uid");
-    cJSON *label = cJSON_GetObjectItemCaseSensitive(params, "label");
     cJSON *phase_id = cJSON_GetObjectItemCaseSensitive(params, "phase_id");
     int has_id = id != NULL && !cJSON_IsNull(id);
-    int has_uid = uid != NULL && !cJSON_IsNull(uid);
-    int has_label = label != NULL && !cJSON_IsNull(label);
     int has_phase_id = phase_id != NULL && !cJSON_IsNull(phase_id);
-    int has_selector = has_id || has_uid || has_label;
 
-    if (!has_selector && !has_phase_id) {
+    if (!has_id && !has_phase_id) {
         *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-        *err_msg_out = "uid, id, label, or phase_id is required";
+        *err_msg_out = "id or phase_id is required";
         return -1;
     }
-    int resolved = 0;
-    sqlite3_int64 result = 0;
-    if (has_selector) {
-        if (ipman_read_phase_selector(params, db, &result,
-                                     err_code_out, err_msg_out) != 0) {
+    sqlite3_int64 id_value = 0;
+    sqlite3_int64 phase_id_value = 0;
+    if (has_id) {
+        if (!cJSON_IsNumber(id) || id->valuedouble < 1.0) {
+            *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+            *err_msg_out = "id must be a positive integer";
             return -1;
         }
-        resolved = 1;
+        id_value = (sqlite3_int64)id->valuedouble;
     }
     if (has_phase_id) {
         if (!cJSON_IsNumber(phase_id) || phase_id->valuedouble < 1.0) {
@@ -223,16 +159,14 @@ static int read_phase_list_tasks_id(cJSON *params,
             *err_msg_out = "phase_id must be a positive integer";
             return -1;
         }
-        sqlite3_int64 alias_value = (sqlite3_int64)phase_id->valuedouble;
-        if (resolved && alias_value != result) {
-            *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-            *err_msg_out = "phase_id must match the resolved phase selector";
-            return -1;
-        }
-        result = alias_value;
-        resolved = 1;
+        phase_id_value = (sqlite3_int64)phase_id->valuedouble;
     }
-    *phase_id_out = result;
+    if (has_id && has_phase_id && id_value != phase_id_value) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "id and phase_id must match";
+        return -1;
+    }
+    *phase_id_out = has_id ? id_value : phase_id_value;
     return 0;
 }
 
@@ -1012,7 +946,6 @@ int ipman_op_phase_create(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_phase_get_params[] = {
     { "id" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -1045,7 +978,7 @@ int ipman_op_phase_get(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_phase_lookup_params[] = {
     { "uid" }, { "label" },
-    { "plan_id" }, { "plan_uid" }, { "plan_label" },
+    { "plan_id" },
     { NULL },
 };
 
@@ -1170,7 +1103,6 @@ static int update_phase_fields(sqlite3 *db,
 const ipman_param_desc_t ipman_op_phase_update_params[] = {
     { "id" }, { "title" }, { "summary" }, { "description" },
     { "owner" }, { "target_start_date" }, { "target_end_date" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -1298,7 +1230,6 @@ static int move_phase_sequence(sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_phase_move_params[] = {
     { "id" }, { "sequence_no" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -1466,7 +1397,6 @@ const ipman_param_desc_t ipman_op_phase_close_params[] = {
     { "outcome_summary" }, { "closing_comment" },
     { "lessons_learned" }, { "open_items_summary" },
     { "followup_needed" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -1586,7 +1516,6 @@ int ipman_op_phase_close(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_phase_reopen_params[] = {
     { "id" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -1646,7 +1575,6 @@ int ipman_op_phase_reopen(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_phase_list_tasks_params[] = {
     { "id" }, { "phase_id" }, { "status" }, { "limit" }, { "offset" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -1890,7 +1818,6 @@ int ipman_op_phase_list(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_phase_progress_params[] = {
     { "id" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
@@ -1976,7 +1903,6 @@ int ipman_op_phase_progress(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_phase_history_params[] = {
     { "id" }, { "since" }, { "limit" }, { "offset" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
