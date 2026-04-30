@@ -506,7 +506,6 @@ int ipman_op_plan_comment_add(const ipman_request_t *req, sqlite3 *db,
 
 const ipman_param_desc_t ipman_op_phase_comment_add_params[] = {
     { "id" }, { "body" }, { "comment_type" },
-    { "uid" }, { "label" }, { "plan_uid" }, { "plan_label" },
     { NULL },
 };
 
