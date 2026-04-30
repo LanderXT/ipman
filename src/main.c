@@ -32,6 +32,7 @@
 #include "render_md.h"
 #include "skill_install.h"
 #include "cli_output.h"
+#include "cli_selector.h"
 
 #include <cJSON.h>
 
@@ -600,70 +601,22 @@ static int run_show(const char *selector) {
     if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0)
         return 1;
 
-    cJSON *result = NULL;
-
-    if (strncmp(selector, "task_", 5) == 0) {
-        cJSON *p = cJSON_CreateObject();
-        cJSON_AddStringToObject(p, "uid", selector);
-        result = call_op(db, "task.get", p);
-        cJSON_Delete(p);
-    } else if (strncmp(selector, "phase_", 6) == 0) {
-        cJSON *p = cJSON_CreateObject();
-        cJSON_AddStringToObject(p, "uid", selector);
-        result = call_op(db, "phase.get", p);
-        cJSON_Delete(p);
-    } else {
-        char *end = NULL;
-        long id = strtol(selector, &end, 10);
-        if (end != selector && *end == '\0' && id > 0) {
-            /* Numeric: try task, then phase */
-            cJSON *p = cJSON_CreateObject();
-            cJSON_AddNumberToObject(p, "id", (double)id);
-            result = call_op(db, "task.get", p);
-            if (result == NULL) result = call_op(db, "phase.get", p);
-            cJSON_Delete(p);
-        } else {
-            /* Label: needs active plan scope.
-             * workspace.context_get embeds a partial plan without uid, so we
-             * fetch the full plan via plan.get to get the uid. */
-            cJSON *ctx_p = cJSON_CreateObject();
-            cJSON *ctx   = call_op(db, "workspace.context_get", ctx_p);
-            cJSON_Delete(ctx_p);
-            cJSON *context    = ctx ? cJSON_GetObjectItemCaseSensitive(ctx, "context") : NULL;
-            cJSON *plan_embed = context ? cJSON_GetObjectItemCaseSensitive(context, "active_plan") : NULL;
-            cJSON *plan_id_j  = plan_embed ? cJSON_GetObjectItemCaseSensitive(plan_embed, "id") : NULL;
-
-            if (!cJSON_IsNumber(plan_id_j)) {
-                fprintf(stderr, "ipman show: label selector requires an active plan\n");
-                if (ctx) cJSON_Delete(ctx);
-                ipman_db_close(db);
-                return 1;
-            }
-
-            cJSON *plan_p = cJSON_CreateObject();
-            cJSON_AddNumberToObject(plan_p, "id", plan_id_j->valuedouble);
-            cJSON *plan_r = call_op(db, "plan.get", plan_p);
-            cJSON_Delete(plan_p);
-            cJSON_Delete(ctx);
-
-            cJSON *plan_full = plan_r ? cJSON_GetObjectItemCaseSensitive(plan_r, "plan") : NULL;
-            cJSON *plan_uid  = plan_full ? cJSON_GetObjectItemCaseSensitive(plan_full, "uid") : NULL;
-            if (!cJSON_IsString(plan_uid)) {
-                if (plan_r) cJSON_Delete(plan_r);
-                ipman_db_close(db);
-                return 1;
-            }
-
-            /* Try task first, then phase */
-            cJSON *p = cJSON_CreateObject();
-            cJSON_AddStringToObject(p, "label",    selector);
-            cJSON_AddStringToObject(p, "plan_uid", plan_uid->valuestring);
-            result = call_op(db, "task.get", p);
-            if (result == NULL) result = call_op(db, "phase.get", p);
-            cJSON_Delete(p);
-            cJSON_Delete(plan_r);
-        }
+    long id = 0;
+    cli_selector_kind_t kind = 0;
+    char err[CLI_SELECTOR_ERR_LEN];
+    if (cli_resolve_selector(db, selector, CLI_SELECTOR_KIND_TASK_OR_PHASE,
+                             &id, &kind, err, sizeof err) != 0) {
+        fprintf(stderr, "ipman show: %s\n", err);
+        ipman_db_close(db);
+        return 1;
     }
+
+    const char *get_op = (kind == CLI_SELECTOR_KIND_TASK) ? "task.get"
+                                                          : "phase.get";
+    cJSON *p = cJSON_CreateObject();
+    cJSON_AddNumberToObject(p, "id", (double)id);
+    cJSON *result = call_op(db, get_op, p);
+    cJSON_Delete(p);
 
     if (result == NULL) { ipman_db_close(db); return 1; }
 

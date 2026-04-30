@@ -88,12 +88,6 @@ static const kind_meta_t k_kinds[] = {
 };
 static const size_t k_kinds_n = sizeof k_kinds / sizeof k_kinds[0];
 
-static const kind_meta_t *meta_for(cli_selector_kind_t k) {
-    for (size_t i = 0; i < k_kinds_n; i++)
-        if (k_kinds[i].kind == k) return &k_kinds[i];
-    return NULL;
-}
-
 static int parse_positive_long(const char *s, long *out) {
     if (s == NULL || *s == '\0') return -1;
     /* Reject leading whitespace and signs: ids are bare positive integers. */
@@ -333,15 +327,9 @@ int cli_resolve_selector(sqlite3 *db,
         }
     }
 
+    char accepted[64];
+    format_kinds(expected, accepted, sizeof accepted);
     set_err(err_buf, err_buf_size,
-            "no task, phase, or plan matches label `%s`", arg);
-    /* If only one kind was expected, refine the message. */
-    cli_selector_kind_t only;
-    if (single_kind(expected, &only)) {
-        const kind_meta_t *m = meta_for(only);
-        if (m != NULL)
-            set_err(err_buf, err_buf_size,
-                    "no %s matches label `%s`", m->display, arg);
-    }
+            "no %s matches label `%s`", accepted, arg);
     return -1;
 }
