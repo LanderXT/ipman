@@ -73,6 +73,8 @@ static int op_uses_phase_selector(const char *name);
 static int op_uses_phase_or_phase_id_selector(const char *name);
 static int op_uses_task_selector(const char *name);
 static int op_uses_plan_selector(const char *name);
+static int op_uses_plan_lookup_selector(const char *name);
+static int op_uses_child_lookup_selector(const char *name);
 
 static const OperationSpec k_operation_specs[] = {
     { "noop", "workspace", "inspect", "Return an empty success result; useful for smoke tests.", "none", "none", "params must be an object, normally empty.", "Initialized workspace.", "Runs normal startup checks and returns no business data.", "internal_error if response allocation fails.", "result is an empty object.", "workspace.refresh_agent_docs", "{}", "", "" },
@@ -94,6 +96,7 @@ static const OperationSpec k_operation_specs[] = {
     { "phase.history", "phase", "audit/history", "Read audit events for one phase.", "one of id, uid, or label", "since; plan_uid or plan_label (scope required when using label)", "since must be a positive integer when provided; label requires plan_uid or plan_label scope.", "Phase must exist.", "No business data changes.", "validation_failed, not_found, internal_error.", "result.events.", "event.list, phase.get", "{\"id\":1,\"since\":1}", "", "events" },
     { "phase.list", "phase", "inspect", "List phases, optionally filtered.", "none", "plan_id, status, completed_or_blocked, limit, offset", "status must be a phase status; completed_or_blocked is boolean; limit is 1..500.", "none.", "No business data changes.", "validation_failed, internal_error.", "result.phases, result.limit, result.offset, result.has_more, result.total_count.", "phase.get, phase.list_tasks", "{\"plan_id\":1,\"limit\":100}", "", "phases, limit, offset, has_more, total_count" },
     { "phase.list_tasks", "task", "inspect", "List tasks in a phase.", "one of id, uid, label, or phase_id", "status; plan_uid or plan_label (scope required when using label)", "id and phase_id must be positive; phase_id is an alias that must match any resolved id, uid, or label selector supplied with it; status must be a task status; label requires plan_uid or plan_label scope.", "Phase must exist.", "No business data changes.", "validation_failed, not_found, internal_error.", "result.tasks.", "task.list, phase.get", "{\"id\":1,\"status\":\"todo\"}", "", "tasks" },
+    { "phase.lookup", "phase", "inspect", "Resolve a phase id from its uid or label+plan scope.", "uid OR (label and one of plan_id, plan_uid, plan_label)", "none", "uid and label must be non-empty strings; label requires plan_id, plan_uid, or plan_label scope; id is not accepted (use phase.get for id-based fetches).", "Phase must exist.", "No business data changes.", "validation_failed, not_found, internal_error.", "result.id.", "phase.get, plan.lookup, task.lookup", "{\"label\":\"implementation\",\"plan_id\":1}", "", "id" },
     { "phase.move", "phase", "ongoing execution", "Move a phase to another sequence number.", "one of id, uid, or label; sequence_no", "plan_uid or plan_label (scope required when using label)", "sequence_no must be a positive integer; label requires plan_uid or plan_label scope.", "Phase must exist.", "Reorders phases and emits phase_moved when changed.", "validation_failed, not_found, conflict, internal_error.", "result.phase.", "phase.list", "{\"id\":1,\"sequence_no\":2}", "\"sequence_no\"", "phase" },
     { "phase.progress", "phase", "inspect", "Summarize task status counts for a phase.", "one of id, uid, or label", "plan_uid or plan_label (scope required when using label)", "label requires plan_uid or plan_label scope.", "Phase must exist.", "No business data changes.", "validation_failed, not_found, internal_error.", "status counts, total, completion_percentage.", "phase.list_tasks, task.list", "{\"id\":1}", "", "phase_id, plan_id, counts, total, completion_percentage" },
     { "phase.reopen", "phase", "ongoing execution", "Reopen a completed or canceled phase.", "one of id, uid, or label", "plan_uid or plan_label (scope required when using label)", "label requires plan_uid or plan_label scope.", "Phase must exist and be completed or canceled.", "Sets phase to open and emits phase_reopened.", "validation_failed, not_found, conflict, internal_error.", "result.phase.", "phase.close", "{\"id\":1}", "", "phase" },
@@ -109,6 +112,7 @@ static const OperationSpec k_operation_specs[] = {
     { "plan.get", "plan", "inspect", "Fetch one plan by id, code, uid, or label.", "one of id, code, uid, or label", "none", "id must be positive; code, uid, and label must be non-empty strings.", "Plan must exist.", "No business data changes.", "validation_failed, not_found, internal_error.", "result.plan.", "plan.list, plan.history", "{\"code\":\"REL-001\"}", "", "plan" },
     { "plan.history", "plan", "audit/history", "Read audit events for one plan.", "one of id, uid, code, or label", "since", "id must be positive; code, uid, and label must be non-empty; since is a positive event id.", "Plan must exist.", "No business data changes.", "validation_failed, not_found, internal_error.", "result.events.", "event.list, plan.get", "{\"code\":\"REL-001\",\"since\":1}", "", "events" },
     { "plan.list", "plan", "inspect", "List plans with optional filters.", "none", "status, owner, tag, limit, offset", "filters must be strings or null; status must be a plan status; limit is 1..500.", "none.", "No business data changes.", "validation_failed, internal_error.", "result.plans, result.limit, result.offset, result.has_more, result.total_count.", "plan.get, plan.create", "{\"status\":\"open\"}", "", "plans, limit, offset, has_more, total_count" },
+    { "plan.lookup", "plan", "inspect", "Resolve a plan id from its uid, label, or code.", "one of uid, label, or code", "none", "uid, label, and code must be non-empty strings; id is not accepted (use plan.get for id-based fetches).", "Plan must exist.", "No business data changes.", "validation_failed, not_found, internal_error.", "result.id.", "plan.get, phase.lookup, task.lookup", "{\"code\":\"REL-001\"}", "", "id" },
     { "plan.progress", "plan", "inspect", "Summarize task status counts for a plan.", "one of id, uid, code, or label", "none", "id must be positive; code, uid, and label must be non-empty strings.", "Plan must exist.", "No business data changes.", "validation_failed, not_found, internal_error.", "status counts, total, completion_percentage.", "task.list, phase.progress", "{\"code\":\"REL-001\"}", "", "plan_id, counts, total, completion_percentage" },
     { "plan.reopen", "plan", "ongoing execution", "Reopen a completed, canceled, or archived plan.", "one of id, uid, code, or label", "none", "id must be positive; code, uid, and label must be non-empty strings.", "Plan must exist and be completed, canceled, or archived.", "Sets status open and emits plan_reopened.", "validation_failed, not_found, conflict, internal_error.", "result.plan.", "plan.close, plan.archive", "{\"code\":\"REL-001\"}", "", "plan" },
     { "plan.update", "plan", "ongoing execution", "Update editable plan fields.", "one of id, uid, code, or label; plus at least one updated field", "title, summary, description, priority, owner, target_date, tags, version_label", "title must remain non-empty; priority and tags are validated; nullable fields may be null; id must be positive; code, uid, and label must be non-empty strings.", "Plan must exist.", "Updates plan and emits plan_updated.", "validation_failed, not_found, conflict, internal_error.", "result.plan.", "plan.get, plan.history", "{\"code\":\"REL-001\",\"summary\":\"Updated release scope\",\"priority\":\"critical\"}", "", "plan" },
@@ -123,6 +127,7 @@ static const OperationSpec k_operation_specs[] = {
     { "task.link_dependency", "task_relation", "ongoing execution", "Create a task relation such as blocks or related.", "id, target_task_id, relation_type", "notes", "relation_type is blocks, blocked_by, related, or duplicates; endpoints must differ.", "Both tasks must exist in the same plan; blocks relations must not create cycles.", "Creates relation and sometimes reverse relation; emits task_updated.", "validation_failed, not_found, conflict, internal_error.", "result.relation and result.reverse_relation.", "task.unlink_dependency, task.list", "{\"id\":1,\"target_task_id\":2,\"relation_type\":\"blocks\",\"notes\":\"Task 2 waits for task 1.\"}", "\"target_task_id\",\"relation_type\"", "relation, reverse_relation" },
     { "task.link_external", "task", "ongoing execution", "Link a task to an external artifact using origin_ref_type and origin_ref_id.", "task_id, ref_type, ref_id", "none", "ref_type must be github_issue, gitlab_issue, commit, pr, adr, url, or file; task_id must be positive; ref_id must be non-empty.", "Task must exist.", "Updates external reference fields and emits task_linked_external.", "validation_failed, not_found, internal_error.", "result.task.", "task.set_origin, task.get", "{\"task_id\":1,\"ref_type\":\"github_issue\",\"ref_id\":\"123\"}", "\"task_id\",\"ref_type\",\"ref_id\"", "task" },
     { "task.list", "task", "inspect", "List tasks using operational filters.", "none", "plan_id, phase_id, status, origin_type, resolution, assignee, priority, blocked, deferred, pending, added_after_original, canceled, replaced, blocked_by_other, limit, offset", "enum filters must be valid; booleans must be true or false; limit is 1..500; offset is >=0.", "none.", "No business data changes.", "validation_failed, internal_error.", "result.tasks, result.limit, result.offset, result.has_more, result.total_count.", "task.get, plan.progress, phase.list_tasks", "{\"plan_id\":1,\"pending\":true,\"limit\":100}", "", "tasks, limit, offset, has_more, total_count" },
+    { "task.lookup", "task", "inspect", "Resolve a task id from its uid or label+plan scope.", "uid OR (label and one of plan_id, plan_uid, plan_label)", "none", "uid and label must be non-empty strings; label requires plan_id, plan_uid, or plan_label scope; id is not accepted (use task.get for id-based fetches).", "Task must exist.", "No business data changes.", "validation_failed, not_found, internal_error.", "result.id.", "task.get, plan.lookup, phase.lookup", "{\"label\":\"fix-login-bug\",\"plan_id\":1}", "", "id" },
     { "task.mark_duplicate", "task", "cancel", "Cancel one task as a duplicate of another.", "one of id, uid, or label; target_task_id; closing_comment or comment", "plan_uid or plan_label (scope required when using label); outcome_summary, reason_code, reason_text, relation_notes, lessons_learned, open_items_summary, followup_needed", "endpoints must differ; closure memory must be non-empty; label requires plan_uid or plan_label scope.", "Both tasks must exist in the same plan; source task must be cancelable.", "Sets source status canceled/resolution duplicate, creates duplicates relation, writes closure record.", "validation_failed, not_found, conflict, internal_error.", "result.task, result.relation, result.comment_id.", "task.cancel, task.link_dependency", "{\"id\":1,\"target_task_id\":2,\"closing_comment\":\"Duplicate of task 2.\",\"outcome_summary\":\"Merged into existing task.\"}", "\"target_task_id\"", "task, relation, comment_id" },
     { "task.move", "task", "ongoing execution", "Move a task to a phase or clear its phase.", "id, phase_id", "none", "id must be positive; phase_id must be positive or null.", "Task must exist; target phase must exist in same plan if provided.", "Updates task phase and emits task_updated.", "validation_failed, not_found, conflict, internal_error.", "result.task.", "phase.list_tasks, task.get", "{\"id\":1,\"phase_id\":2}", "\"phase_id\"", "task" },
     { "task.reopen", "task", "ongoing execution", "Reopen a terminal task.", "one of id, uid, or label", "plan_uid or plan_label (scope required when using label)", "label requires plan_uid or plan_label scope.", "Task must exist, be terminal, not resolution=replaced, and if it belongs to a phase that phase must not be terminal (reopen the phase first).", "Sets task to todo, clears terminal fields, emits task_reopened.", "validation_failed, not_found, conflict, internal_error.", "result.task.", "task.close, task.cancel", "{\"id\":1}", "", "task" },
@@ -600,6 +605,12 @@ static const char *selector_note_for_op(const char *name) {
     if (strcmp(name, "plan.activate") == 0) {
         return "Selector contract: requires exactly one of `id` or `code`.";
     }
+    if (op_uses_plan_lookup_selector(name)) {
+        return "Selector contract: accepts `uid`, `label`, or `code`. `id` is not accepted — use `plan.get` for id-based fetches. If multiple selectors are supplied, runtime resolution uses `uid` first, then `label`, then `code`.";
+    }
+    if (op_uses_child_lookup_selector(name)) {
+        return "Selector contract: accepts `uid`, or `label` with `plan_id`, `plan_uid`, or `plan_label` scope. `id` is not accepted — use the corresponding `*.get` op for id-based fetches. Plan scope resolves `plan_id` first, then `plan_uid`, then `plan_label`.";
+    }
     return NULL;
 }
 
@@ -733,6 +744,15 @@ static int op_uses_plan_selector(const char *name) {
     return is_name_in(name, names);
 }
 
+static int op_uses_plan_lookup_selector(const char *name) {
+    return strcmp(name, "plan.lookup") == 0;
+}
+
+static int op_uses_child_lookup_selector(const char *name) {
+    return strcmp(name, "phase.lookup") == 0 ||
+           strcmp(name, "task.lookup") == 0;
+}
+
 static int op_requires_comment_or_closing_comment(const char *name) {
     static const char * const names[] = {
         "task.cancel",
@@ -833,6 +853,27 @@ static int append_schema_rules(Buf *b, const OperationSpec *spec) {
             NULL,
         };
         if (append_oneof_required_rule(b, &rule_count, activate_selector) != 0) {
+            return -1;
+        }
+    } else if (op_uses_plan_lookup_selector(spec->name)) {
+        static const char * const plan_lookup_selector[] = {
+            "\"uid\"",
+            "\"label\"",
+            "\"code\"",
+            NULL,
+        };
+        if (append_anyof_required_rule(b, &rule_count, plan_lookup_selector) != 0) {
+            return -1;
+        }
+    } else if (op_uses_child_lookup_selector(spec->name)) {
+        static const char * const child_lookup_selector[] = {
+            "\"uid\"",
+            "\"label\",\"plan_id\"",
+            "\"label\",\"plan_uid\"",
+            "\"label\",\"plan_label\"",
+            NULL,
+        };
+        if (append_anyof_required_rule(b, &rule_count, child_lookup_selector) != 0) {
             return -1;
         }
     }
