@@ -379,7 +379,7 @@ Planned (no commitment yet):
 - Optional plain-SQLite mode for environments where SQLCipher is hard to install
 - Additional task relationship types (`blocks`, `informs`, …)
 
-Breaking changes will bump `protocol_version` and ship a migration; the embedded migration runner already supports the upgrade path.
+Breaking changes bump `protocol_version` and ship a migration. The current cutover is documented in [`docs/v2-migration.md`](docs/v2-migration.md): every removed selector and output field, with before/after snippets. The embedded migration runner already supports the schema upgrade path.
 
 ## Contributing
 
