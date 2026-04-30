@@ -200,131 +200,36 @@ static int read_plan_selector(sqlite3 *db, cJSON *params,
                               sqlite3_int64 *plan_id_out,
                               ipman_error_code_t *err_code_out,
                               const char **err_msg_out) {
-    cJSON *uid_item   = cJSON_GetObjectItemCaseSensitive(params, "uid");
-    cJSON *id_item    = cJSON_GetObjectItemCaseSensitive(params, "id");
-    cJSON *label_item = cJSON_GetObjectItemCaseSensitive(params, "label");
-    cJSON *code_item  = cJSON_GetObjectItemCaseSensitive(params, "code");
-
-    if (uid_item && cJSON_IsString(uid_item) && uid_item->valuestring) {
-        sqlite3_stmt *stmt;
-        int rc = sqlite3_prepare_v2(db, "SELECT id FROM plans WHERE uid = ?", -1, &stmt, NULL);
-        if (rc == SQLITE_OK) {
-            sqlite3_bind_text(stmt, 1, uid_item->valuestring, -1, SQLITE_STATIC);
-            rc = sqlite3_step(stmt);
-            if (rc == SQLITE_ROW) {
-                *plan_id_out = sqlite3_column_int64(stmt, 0);
-                sqlite3_finalize(stmt);
-                return 0;
-            }
-            sqlite3_finalize(stmt);
-        }
-        *err_code_out = IPMAN_ERR_NOT_FOUND;
-        *err_msg_out = "plan not found by uid";
+    (void)db;
+    cJSON *id_item = cJSON_GetObjectItemCaseSensitive(params, "id");
+    if (!id_item || !cJSON_IsNumber(id_item)) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "id required (use plan.lookup to resolve uid/label/code to id)";
         return -1;
     }
-
-    if (id_item && cJSON_IsNumber(id_item)) {
-        if (id_item->valuedouble < 1.0) {
-            *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-            *err_msg_out = "id must be a positive integer";
-            return -1;
-        }
-        *plan_id_out = (sqlite3_int64)id_item->valuedouble;
-        return 0;
-    }
-
-    if (label_item && cJSON_IsString(label_item) && label_item->valuestring) {
-        sqlite3_stmt *stmt;
-        int rc = sqlite3_prepare_v2(db, "SELECT id FROM plans WHERE label = ?", -1, &stmt, NULL);
-        if (rc == SQLITE_OK) {
-            sqlite3_bind_text(stmt, 1, label_item->valuestring, -1, SQLITE_STATIC);
-            rc = sqlite3_step(stmt);
-            if (rc == SQLITE_ROW) {
-                *plan_id_out = sqlite3_column_int64(stmt, 0);
-                sqlite3_finalize(stmt);
-                return 0;
-            }
-            sqlite3_finalize(stmt);
-        }
-        *err_code_out = IPMAN_ERR_NOT_FOUND;
-        *err_msg_out = "plan not found by label";
+    if (id_item->valuedouble < 1.0) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "id must be a positive integer";
         return -1;
     }
-
-    if (code_item && cJSON_IsString(code_item) && code_item->valuestring) {
-        sqlite3_stmt *stmt;
-        int rc = sqlite3_prepare_v2(db, "SELECT id FROM plans WHERE code = ?", -1, &stmt, NULL);
-        if (rc == SQLITE_OK) {
-            sqlite3_bind_text(stmt, 1, code_item->valuestring, -1, SQLITE_STATIC);
-            rc = sqlite3_step(stmt);
-            if (rc == SQLITE_ROW) {
-                *plan_id_out = sqlite3_column_int64(stmt, 0);
-                sqlite3_finalize(stmt);
-                return 0;
-            }
-            sqlite3_finalize(stmt);
-        }
-        *err_code_out = IPMAN_ERR_NOT_FOUND;
-        *err_msg_out = "plan not found by code";
-        return -1;
-    }
-
-    *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-    *err_msg_out = "plan selector required (uid, id, label, code)";
-    return -1;
+    *plan_id_out = (sqlite3_int64)id_item->valuedouble;
+    return 0;
 }
 
 int ipman_resolve_plan_scope(cJSON *params, sqlite3 *db,
                              sqlite3_int64 *plan_id_out,
                              ipman_error_code_t *err_code_out,
                              const char **err_msg_out) {
+    (void)db;
     cJSON *plan_id_item = cJSON_GetObjectItemCaseSensitive(params, "plan_id");
-    cJSON *plan_uid_item = cJSON_GetObjectItemCaseSensitive(params, "plan_uid");
-    cJSON *plan_label_item = cJSON_GetObjectItemCaseSensitive(params, "plan_label");
-
-    if (plan_id_item != NULL && cJSON_IsNumber(plan_id_item) &&
-        plan_id_item->valuedouble >= 1.0) {
-        *plan_id_out = (sqlite3_int64)plan_id_item->valuedouble;
-        return 0;
-    }
-
-    const char *sql = NULL;
-    const char *value = NULL;
-    const char *not_found_msg = NULL;
-    if (plan_uid_item != NULL && cJSON_IsString(plan_uid_item) &&
-        plan_uid_item->valuestring) {
-        sql = "SELECT id FROM plans WHERE uid = ?";
-        value = plan_uid_item->valuestring;
-        not_found_msg = "plan not found by plan_uid";
-    } else if (plan_label_item != NULL && cJSON_IsString(plan_label_item) &&
-               plan_label_item->valuestring) {
-        sql = "SELECT id FROM plans WHERE label = ?";
-        value = plan_label_item->valuestring;
-        not_found_msg = "plan not found by plan_label";
-    } else {
+    if (plan_id_item == NULL || !cJSON_IsNumber(plan_id_item) ||
+        plan_id_item->valuedouble < 1.0) {
         *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-        *err_msg_out = "plan scope required (plan_id, plan_uid, or plan_label)";
+        *err_msg_out = "plan_id required (use plan.lookup to resolve plan_uid/plan_label to plan_id)";
         return -1;
     }
-
-    sqlite3_stmt *stmt;
-    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
-    if (rc != SQLITE_OK) {
-        *err_code_out = IPMAN_ERR_INTERNAL;
-        *err_msg_out = "failed to resolve plan scope";
-        return -1;
-    }
-    sqlite3_bind_text(stmt, 1, value, -1, SQLITE_STATIC);
-    rc = sqlite3_step(stmt);
-    if (rc == SQLITE_ROW) {
-        *plan_id_out = sqlite3_column_int64(stmt, 0);
-        sqlite3_finalize(stmt);
-        return 0;
-    }
-    sqlite3_finalize(stmt);
-    *err_code_out = IPMAN_ERR_NOT_FOUND;
-    *err_msg_out = not_found_msg;
-    return -1;
+    *plan_id_out = (sqlite3_int64)plan_id_item->valuedouble;
+    return 0;
 }
 
 static int read_optional_since(cJSON *params,
@@ -973,8 +878,7 @@ static int commit_plan_result_owned(sqlite3 *db, cJSON **result_io,
 }
 
 const ipman_param_desc_t ipman_op_plan_get_params[] = {
-    { "id" }, { "code" },
-    { "uid" }, { "label" },
+    { "id" },
     { NULL },
 };
 
@@ -1016,15 +920,46 @@ int ipman_op_plan_lookup(const ipman_request_t *req, sqlite3 *db,
         *err_msg_out = "id is not a valid lookup input; lookup resolves uid/label/code to id";
         return -1;
     }
-    if (cJSON_GetObjectItemCaseSensitive(req->params, "uid") == NULL &&
-        cJSON_GetObjectItemCaseSensitive(req->params, "label") == NULL &&
-        cJSON_GetObjectItemCaseSensitive(req->params, "code") == NULL) {
+    cJSON *uid_item   = cJSON_GetObjectItemCaseSensitive(req->params, "uid");
+    cJSON *label_item = cJSON_GetObjectItemCaseSensitive(req->params, "label");
+    cJSON *code_item  = cJSON_GetObjectItemCaseSensitive(req->params, "code");
+    const char *sql = NULL;
+    const char *value = NULL;
+    const char *not_found_msg = NULL;
+    if (uid_item && cJSON_IsString(uid_item) && uid_item->valuestring) {
+        sql = "SELECT id FROM plans WHERE uid = ?";
+        value = uid_item->valuestring;
+        not_found_msg = "plan not found by uid";
+    } else if (label_item && cJSON_IsString(label_item) && label_item->valuestring) {
+        sql = "SELECT id FROM plans WHERE label = ?";
+        value = label_item->valuestring;
+        not_found_msg = "plan not found by label";
+    } else if (code_item && cJSON_IsString(code_item) && code_item->valuestring) {
+        sql = "SELECT id FROM plans WHERE code = ?";
+        value = code_item->valuestring;
+        not_found_msg = "plan not found by code";
+    } else {
         *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
         *err_msg_out = "lookup requires one of: uid, label, code";
         return -1;
     }
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to prepare lookup query";
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, value, -1, SQLITE_STATIC);
     sqlite3_int64 plan_id = 0;
-    if (read_plan_selector(db, req->params, &plan_id, err_code_out, err_msg_out) != 0) return -1;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        plan_id = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+    } else {
+        sqlite3_finalize(stmt);
+        *err_code_out = IPMAN_ERR_NOT_FOUND;
+        *err_msg_out = not_found_msg;
+        return -1;
+    }
     cJSON *result = cJSON_CreateObject();
     if (result == NULL ||
         cJSON_AddNumberToObject(result, "id", (double)plan_id) == NULL) {
@@ -1038,11 +973,10 @@ int ipman_op_plan_lookup(const ipman_request_t *req, sqlite3 *db,
 }
 
 const ipman_param_desc_t ipman_op_plan_update_params[] = {
-    { "id" }, { "code" },
+    { "id" },
     { "title" }, { "summary" }, { "description" },
     { "priority" }, { "owner" }, { "target_date" },
     { "version_label" }, { "tags" },
-    { "uid" }, { "label" },
     { NULL },
 };
 
@@ -1460,7 +1394,7 @@ static int plan_transition(const ipman_request_t *req,
 }
 
 const ipman_param_desc_t ipman_op_plan_close_params[] = {
-    { "uid" }, { "id" }, { "label" }, { "code" }, { "outcome" },
+    { "id" }, { "outcome" },
     { "outcome_summary" }, { "closing_comment" },
     { "lessons_learned" }, { "open_items_summary" },
     { "followup_needed" },
@@ -1476,8 +1410,7 @@ int ipman_op_plan_close(const ipman_request_t *req, sqlite3 *db,
 }
 
 const ipman_param_desc_t ipman_op_plan_archive_params[] = {
-    { "id" }, { "code" },
-    { "uid" }, { "label" },
+    { "id" },
     { NULL },
 };
 
@@ -1490,8 +1423,7 @@ int ipman_op_plan_archive(const ipman_request_t *req, sqlite3 *db,
 }
 
 const ipman_param_desc_t ipman_op_plan_reopen_params[] = {
-    { "id" }, { "code" },
-    { "uid" }, { "label" },
+    { "id" },
     { NULL },
 };
 
@@ -1504,8 +1436,7 @@ int ipman_op_plan_reopen(const ipman_request_t *req, sqlite3 *db,
 }
 
 const ipman_param_desc_t ipman_op_plan_history_params[] = {
-    { "id" }, { "code" }, { "since" },
-    { "uid" }, { "label" },
+    { "id" }, { "since" },
     { NULL },
 };
 
@@ -1584,7 +1515,7 @@ int ipman_op_plan_history(const ipman_request_t *req, sqlite3 *db,
 }
 
 const ipman_param_desc_t ipman_op_plan_progress_params[] = {
-    { "uid" }, { "id" }, { "label" }, { "code" },
+    { "id" },
     { NULL },
 };
 
