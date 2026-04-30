@@ -1495,10 +1495,6 @@ int ipman_op_plan_history(const ipman_request_t *req, sqlite3 *db,
             *err_msg_out = "failed to build plan history";
             return -1;
         }
-        ipman_attach_entity_ref(db, event, "entity_type", "entity_id",
-                               "entity_ref");
-        ipman_attach_entity_ref(db, event, "related_entity_type",
-                               "related_entity_id", "related_entity_ref");
         cJSON_AddItemToArray(events, event);
     }
     sqlite3_finalize(stmt);

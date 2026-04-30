@@ -12,89 +12,6 @@
 #define EVENT_LIST_DEFAULT_LIMIT 100
 #define EVENT_LIST_MAX_LIMIT 500
 
-void ipman_compute_entity_ref(sqlite3 *db,
-                             const char *entity_type,
-                             sqlite3_int64 entity_id,
-                             char *buf, size_t cap) {
-    if (cap == 0) return;
-    buf[0] = '\0';
-    if (entity_type == NULL || entity_id <= 0) return;
-
-    if (strcmp(entity_type, "plan") == 0) {
-        const char *sql = "SELECT code FROM plans WHERE id = ?;";
-        sqlite3_stmt *stmt = NULL;
-        if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return;
-        sqlite3_bind_int64(stmt, 1, entity_id);
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            const unsigned char *code = sqlite3_column_text(stmt, 0);
-            if (code != NULL) {
-                snprintf(buf, cap, "%s", (const char *)code);
-            } else {
-                snprintf(buf, cap, "plan_%lld", (long long)entity_id);
-            }
-        }
-        sqlite3_finalize(stmt);
-        return;
-    }
-
-    char prefix;
-    const char *sql;
-    if (strcmp(entity_type, "phase") == 0) {
-        prefix = 'F';
-        sql = "SELECT (SELECT code FROM plans WHERE id = phases.plan_id), "
-              "phases.local_seq, phases.plan_id "
-              "FROM phases WHERE id = ?;";
-    } else if (strcmp(entity_type, "task") == 0) {
-        prefix = 'T';
-        sql = "SELECT (SELECT code FROM plans WHERE id = tasks.plan_id), "
-              "tasks.local_seq, tasks.plan_id "
-              "FROM tasks WHERE id = ?;";
-    } else {
-        return;
-    }
-
-    sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return;
-    sqlite3_bind_int64(stmt, 1, entity_id);
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        const unsigned char *code = sqlite3_column_text(stmt, 0);
-        sqlite3_int64 local_seq = sqlite3_column_int64(stmt, 1);
-        sqlite3_int64 plan_id   = sqlite3_column_int64(stmt, 2);
-        if (local_seq > 0) {
-            if (code != NULL) {
-                snprintf(buf, cap, "%s/%c%lld",
-                         (const char *)code, prefix, (long long)local_seq);
-            } else {
-                snprintf(buf, cap, "plan_%lld/%c%lld",
-                         (long long)plan_id, prefix, (long long)local_seq);
-            }
-        }
-    }
-    sqlite3_finalize(stmt);
-}
-
-void ipman_attach_entity_ref(sqlite3 *db, cJSON *obj,
-                            const char *type_field,
-                            const char *id_field,
-                            const char *ref_field) {
-    /* Computed convenience ref — only added when resolvable. v2 convention:
-     * optional fields are absent rather than explicit-null. */
-    if (obj == NULL) return;
-    const cJSON *type_item = cJSON_GetObjectItemCaseSensitive(obj, type_field);
-    const cJSON *id_item   = cJSON_GetObjectItemCaseSensitive(obj, id_field);
-    if (!cJSON_IsString(type_item) || type_item->valuestring == NULL ||
-        !cJSON_IsNumber(id_item)   || id_item->valuedouble < 1.0) {
-        return;
-    }
-    char buf[256];
-    ipman_compute_entity_ref(db, type_item->valuestring,
-                            (sqlite3_int64)id_item->valuedouble,
-                            buf, sizeof buf);
-    if (buf[0] != '\0') {
-        cJSON_AddStringToObject(obj, ref_field, buf);
-    }
-}
-
 static int is_entity_type(const char *value) {
     return strcmp(value, "plan") == 0 ||
            strcmp(value, "phase") == 0 ||
@@ -371,10 +288,6 @@ int ipman_op_event_list(const ipman_request_t *req, sqlite3 *db,
             *err_msg_out = "failed to build event list";
             return -1;
         }
-        ipman_attach_entity_ref(db, event, "entity_type", "entity_id",
-                               "entity_ref");
-        ipman_attach_entity_ref(db, event, "related_entity_type",
-                               "related_entity_id", "related_entity_ref");
         cJSON_AddItemToArray(events, event);
     }
     sqlite3_finalize(stmt);

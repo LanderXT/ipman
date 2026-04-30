@@ -948,32 +948,6 @@ static int load_task_or_error(sqlite3 *db,
     return -1;
 }
 
-static void attach_relation_refs(sqlite3 *db, cJSON *relation) {
-    /* Computed convenience refs — only added when resolvable; absent when
-     * the underlying numeric id couldn't be turned into a label. v2
-     * convention: optional fields are absent rather than explicit-null. */
-    if (relation == NULL) return;
-    char buf[256];
-    cJSON *from = cJSON_GetObjectItemCaseSensitive(relation, "from_task_id");
-    if (cJSON_IsNumber(from) && from->valuedouble >= 1.0) {
-        ipman_compute_entity_ref(db, "task",
-                                (sqlite3_int64)from->valuedouble,
-                                buf, sizeof buf);
-        if (buf[0] != '\0') {
-            cJSON_AddStringToObject(relation, "from_task_ref", buf);
-        }
-    }
-    cJSON *to = cJSON_GetObjectItemCaseSensitive(relation, "to_task_id");
-    if (cJSON_IsNumber(to) && to->valuedouble >= 1.0) {
-        ipman_compute_entity_ref(db, "task",
-                                (sqlite3_int64)to->valuedouble,
-                                buf, sizeof buf);
-        if (buf[0] != '\0') {
-            cJSON_AddStringToObject(relation, "to_task_ref", buf);
-        }
-    }
-}
-
 static cJSON *relation_json_from_row(const task_relation_row_t *row) {
     cJSON *relation = cJSON_CreateObject();
     if (relation == NULL) return NULL;
@@ -1015,7 +989,6 @@ static cJSON *load_task_relation(sqlite3 *db, sqlite3_int64 relation_id) {
     cJSON *relation = NULL;
     if (rc == SQLITE_ROW) relation = relation_from_stmt(stmt);
     sqlite3_finalize(stmt);
-    attach_relation_refs(db, relation);
     return relation;
 }
 
@@ -1037,7 +1010,6 @@ static cJSON *load_task_relation_by_key(sqlite3 *db,
     cJSON *relation = NULL;
     if (rc == SQLITE_ROW) relation = relation_from_stmt(stmt);
     sqlite3_finalize(stmt);
-    attach_relation_refs(db, relation);
     return relation;
 }
 
