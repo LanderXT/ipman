@@ -399,6 +399,7 @@ static const char *parse_command(const char *arg) {
     if (strcmp(arg, "log")      == 0 || strcmp(arg, "-LG") == 0 || strcmp(arg, "--log")     == 0) return "log";
     if (strcmp(arg, "start")    == 0 ||                              strcmp(arg, "--start")   == 0) return "start";
     if (strcmp(arg, "close")    == 0 ||                              strcmp(arg, "--close")   == 0) return "close";
+    if (strcmp(arg, "cancel")   == 0 ||                              strcmp(arg, "--cancel")  == 0) return "cancel";
     if (strcmp(arg, "b64")      == 0 || strcmp(arg, "-B")  == 0 || strcmp(arg, "--b64")     == 0) return "b64";
     if (strcmp(arg, "usage")    == 0 || strcmp(arg, "-U")  == 0 || strcmp(arg, "--usage")   == 0) return "usage";
     return NULL;
@@ -794,6 +795,89 @@ static int run_close(int argc, char **argv) {
     return 0;
 }
 
+/* --cancel <selector> --summary <text> --comment <text>
+ * Resolves a task selector and dispatches task.cancel with
+ * resolution=canceled. The human verb does not expose the other resolutions
+ * (not_planned, discarded, duplicate); use the raw protocol for those. */
+static int run_cancel(int argc, char **argv) {
+    const char *selector = NULL;
+    const char *summary  = NULL;
+    const char *comment  = NULL;
+
+    for (int i = 2; i < argc; ++i) {
+        if (strcmp(argv[i], "--summary") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman cancel: --summary requires a value\n");
+                return 1;
+            }
+            summary = argv[++i];
+        } else if (strcmp(argv[i], "--comment") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman cancel: --comment requires a value\n");
+                return 1;
+            }
+            comment = argv[++i];
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "ipman cancel: unknown flag: %s\n", argv[i]);
+            return 1;
+        } else if (selector == NULL) {
+            selector = argv[i];
+        } else {
+            fprintf(stderr, "ipman cancel: unexpected extra argument: %s\n",
+                    argv[i]);
+            return 1;
+        }
+    }
+
+    if (selector == NULL || summary == NULL || comment == NULL) {
+        if (selector == NULL)
+            fprintf(stderr, "ipman cancel: <selector> is required\n");
+        if (summary == NULL)
+            fprintf(stderr, "ipman cancel: --summary is required\n");
+        if (comment == NULL)
+            fprintf(stderr, "ipman cancel: --comment is required\n");
+        fprintf(stderr,
+                "usage: ipman --cancel <task-uid|label|id> "
+                "--summary <text> --comment <text>\n");
+        return 1;
+    }
+
+    char home[PATH_MAX], dbpath[PATH_MAX];
+    sqlite3 *db = NULL;
+    if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0)
+        return 1;
+
+    long id = 0;
+    cli_selector_kind_t kind = 0;
+    char err[CLI_SELECTOR_ERR_LEN];
+    if (cli_resolve_selector(db, selector, CLI_SELECTOR_KIND_TASK,
+                             &id, &kind, err, sizeof err) != 0) {
+        fprintf(stderr, "ipman cancel: %s\n", err);
+        ipman_db_close(db);
+        return 1;
+    }
+
+    cJSON *p = cJSON_CreateObject();
+    cJSON_AddNumberToObject(p, "id",              (double)id);
+    cJSON_AddStringToObject(p, "resolution",      "canceled");
+    cJSON_AddStringToObject(p, "outcome_summary", summary);
+    cJSON_AddStringToObject(p, "closing_comment", comment);
+    cJSON *result = call_op(db, "task.cancel", p);
+    cJSON_Delete(p);
+    ipman_db_close(db);
+
+    if (result == NULL) return 1;
+
+    cJSON *task  = cJSON_GetObjectItemCaseSensitive(result, "task");
+    cJSON *title = task ? cJSON_GetObjectItemCaseSensitive(task, "title") : NULL;
+    if (title && cJSON_IsString(title))
+        fprintf(stdout, "canceled task %ld: %s\n", id, title->valuestring);
+    else
+        fprintf(stdout, "canceled task %ld\n", id);
+    cJSON_Delete(result);
+    return 0;
+}
+
 static int run_log(void) {
     char home[PATH_MAX], dbpath[PATH_MAX];
     sqlite3 *db = NULL;
@@ -884,6 +968,9 @@ int main(int argc, char **argv) {
     }
     if (cmd != NULL && strcmp(cmd, "close") == 0) {
         return run_close(argc, argv);
+    }
+    if (cmd != NULL && strcmp(cmd, "cancel") == 0) {
+        return run_cancel(argc, argv);
     }
     if (cmd != NULL && strcmp(cmd, "b64") == 0) {
         g_b64_mode = 1;
