@@ -44,6 +44,7 @@
 #include <unistd.h>
 
 static int g_b64_mode = 0;
+static int g_dry_run  = 0;
 
 /* Default cap on stdin payload size (16 MiB). Overridable per-process via the
  * IPMAN_MAX_REQUEST_BYTES env var. Mitigates OWASP A04 unbounded-input risk on
@@ -446,6 +447,30 @@ static cJSON *call_op(sqlite3 *db, const char *op, cJSON *params) {
     return result;
 }
 
+/* Print the v2 protocol envelope a write verb would dispatch, then exit
+ * the verb without executing it. Used by --dry-run; the printed envelope
+ * is valid JSON suitable for piping into `ipman` over stdin if the user
+ * decides to run it. The synthetic request_id "dry-run-<verb>" makes
+ * dry-run dispatches identifiable in any downstream logs. */
+static void print_dry_run_envelope(const char *op, const cJSON *params,
+                                   const char *verb) {
+    cJSON *envelope = cJSON_CreateObject();
+    cJSON_AddNumberToObject(envelope, "protocol_version", 2);
+    char rid[64];
+    snprintf(rid, sizeof rid, "dry-run-%s", verb);
+    cJSON_AddStringToObject(envelope, "request_id", rid);
+    cJSON_AddStringToObject(envelope, "actor",      "cli");
+    cJSON_AddStringToObject(envelope, "op",         op);
+    cJSON_AddItemToObject(envelope, "params", cJSON_Duplicate(params, 1));
+
+    char *s = cJSON_Print(envelope);
+    if (s != NULL) {
+        fprintf(stdout, "%s\n", s);
+        free(s);
+    }
+    cJSON_Delete(envelope);
+}
+
 /* ---- human CLI commands ------------------------------------------- */
 
 static int run_status(void) {
@@ -678,6 +703,12 @@ static int run_start(const char *selector) {
     cJSON *p = cJSON_CreateObject();
     cJSON_AddNumberToObject(p, "id",     (double)id);
     cJSON_AddStringToObject(p, "status", "in_progress");
+    if (g_dry_run) {
+        print_dry_run_envelope("task.transition", p, "start");
+        cJSON_Delete(p);
+        ipman_db_close(db);
+        return 0;
+    }
     cJSON *result = call_op(db, "task.transition", p);
     cJSON_Delete(p);
     ipman_db_close(db);
@@ -782,6 +813,12 @@ static int run_close(int argc, char **argv) {
     if (lessons    != NULL) cJSON_AddStringToObject(p, "lessons_learned",    lessons);
     if (open_items != NULL) cJSON_AddStringToObject(p, "open_items_summary", open_items);
     if (followup)           cJSON_AddBoolToObject  (p, "followup_needed",    1);
+    if (g_dry_run) {
+        print_dry_run_envelope("task.close", p, "close");
+        cJSON_Delete(p);
+        ipman_db_close(db);
+        return 0;
+    }
     cJSON *result = call_op(db, "task.close", p);
     cJSON_Delete(p);
     ipman_db_close(db);
@@ -865,6 +902,12 @@ static int run_cancel(int argc, char **argv) {
     cJSON_AddStringToObject(p, "resolution",      "canceled");
     cJSON_AddStringToObject(p, "outcome_summary", summary);
     cJSON_AddStringToObject(p, "closing_comment", comment);
+    if (g_dry_run) {
+        print_dry_run_envelope("task.cancel", p, "cancel");
+        cJSON_Delete(p);
+        ipman_db_close(db);
+        return 0;
+    }
     cJSON *result = call_op(db, "task.cancel", p);
     cJSON_Delete(p);
     ipman_db_close(db);
@@ -948,6 +991,12 @@ static int run_defer(int argc, char **argv) {
     cJSON_AddStringToObject(p, "reason_text", reason_text);
     if (reason_code != NULL)
         cJSON_AddStringToObject(p, "reason_code", reason_code);
+    if (g_dry_run) {
+        print_dry_run_envelope("task.defer", p, "defer");
+        cJSON_Delete(p);
+        ipman_db_close(db);
+        return 0;
+    }
     cJSON *result = call_op(db, "task.defer", p);
     cJSON_Delete(p);
     ipman_db_close(db);
@@ -992,6 +1041,12 @@ static int run_current(const char *selector) {
 
     cJSON *p = cJSON_CreateObject();
     cJSON_AddNumberToObject(p, "id", (double)id);
+    if (g_dry_run) {
+        print_dry_run_envelope(op_name, p, "current");
+        cJSON_Delete(p);
+        ipman_db_close(db);
+        return 0;
+    }
     cJSON *result = call_op(db, op_name, p);
     cJSON_Delete(p);
     ipman_db_close(db);
@@ -1029,6 +1084,12 @@ static int run_activate(const char *selector) {
 
     cJSON *p = cJSON_CreateObject();
     cJSON_AddNumberToObject(p, "id", (double)id);
+    if (g_dry_run) {
+        print_dry_run_envelope("plan.activate", p, "activate");
+        cJSON_Delete(p);
+        ipman_db_close(db);
+        return 0;
+    }
     cJSON *result = call_op(db, "plan.activate", p);
     cJSON_Delete(p);
     ipman_db_close(db);
@@ -1099,6 +1160,19 @@ static int run_log(void) {
 }
 
 int main(int argc, char **argv) {
+    /* Strip --dry-run from argv before dispatch so it is position-independent
+     * and the per-verb arg parsers do not see it as an unknown flag. The
+     * write verbs below check g_dry_run just before their dispatch call. */
+    for (int i = 1; i < argc; ) {
+        if (strcmp(argv[i], "--dry-run") == 0) {
+            g_dry_run = 1;
+            for (int j = i; j < argc - 1; ++j) argv[j] = argv[j + 1];
+            argv[--argc] = NULL;
+        } else {
+            ++i;
+        }
+    }
+
     const char *cmd = (argc >= 2) ? parse_command(argv[1]) : NULL;
 
     if (cmd == NULL && argc >= 2) {
