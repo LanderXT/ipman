@@ -174,7 +174,6 @@ For operations not covered here, see `.ipman/operations/ipman.op.*.schema.md` fo
 | `not_found` | Entity does not exist | No | Check the ID; verify entity exists |
 | `conflict` | State violation (terminal state, duplicate, circular) | No | Check entity state; use reopen if terminal |
 | `internal_error` | Database error, OOM, unexpected failure | Maybe | May be transient, but usually fatal |
-| `migration_required` | Schema version mismatch | No | Run `ipman init` or rebuild binary |
 
 Every error — fatal or semantic — emits a JSON envelope on stdout. The exit code is what distinguishes them:
 

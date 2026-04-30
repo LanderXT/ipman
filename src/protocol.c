@@ -10,7 +10,6 @@ static const char *k_code_strings[] = {
     [IPMAN_ERR_NOT_FOUND]           = "not_found",
     [IPMAN_ERR_CONFLICT]            = "conflict",
     [IPMAN_ERR_INTERNAL]            = "internal_error",
-    [IPMAN_ERR_MIGRATION_REQUIRED]  = "migration_required",
 };
 
 const char *ipman_error_code_str(ipman_error_code_t code) {

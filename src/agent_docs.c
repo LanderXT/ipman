@@ -515,7 +515,7 @@ static char *render_protocol_doc(const char *generated_at) {
         /* IMPORTANT: this list mirrors the strings in src/protocol.c:k_code_strings.
          * If you add or remove an error code in src/protocol.h, update both
          * places — the generator does not introspect the enum. */
-        "Known error codes: `invalid_request`, `unknown_op`, `validation_failed`, `not_found`, `conflict`, `internal_error`, `migration_required`.\n\n"
+        "Known error codes: `invalid_request`, `unknown_op`, `validation_failed`, `not_found`, `conflict`, `internal_error`.\n\n"
         "Semantic errors such as validation failures, conflicts, missing records, and unknown operations are JSON responses and usually exit 0. Fatal protocol and internal errors exit non-zero. Always parse stdout and inspect `.ok`.\n\n"
         "### Optional `error.details`\n\n"
         "`error.details` is an optional machine-readable object that some errors attach to the envelope. Agents can switch on `error.details.kind` for fine-grained branching without parsing `error.message`. When present, `code` and `message` keep their existing meaning — `details` is additive.\n\n"

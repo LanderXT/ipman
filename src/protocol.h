@@ -27,8 +27,7 @@ typedef enum {
     IPMAN_ERR_VALIDATION_FAILED,      /* incl. ambiguous label — see msg */
     IPMAN_ERR_NOT_FOUND,
     IPMAN_ERR_CONFLICT,
-    IPMAN_ERR_INTERNAL,               /* fatal — exit 1 */
-    IPMAN_ERR_MIGRATION_REQUIRED
+    IPMAN_ERR_INTERNAL                /* fatal — exit 1 */
 } ipman_error_code_t;
 
 const char *ipman_error_code_str(ipman_error_code_t code);
