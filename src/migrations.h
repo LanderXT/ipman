@@ -10,9 +10,9 @@
  *
  * Each entry carries the full SQL text (embedded at build time from
  * migrations/NNNN_name.sql by scripts/embed_migrations.sh) plus the
- * SHA-256 hex of the source file. Fresh empty databases are created from
- * the current schema baseline and record every embedded migration in
- * schema_metadata; existing databases use the SQL text to upgrade from
+ * SHA-256 hex of the source file. Fresh empty databases run every
+ * embedded migration in version order and record each one in
+ * schema_metadata; existing databases apply only migrations newer than
  * their recorded version. Stored hashes are verified on every later
  * startup — any edit of an already-applied migration will be detected.
  *
@@ -31,11 +31,12 @@ extern const struct ipman_migration ipman_migrations[];
 extern const size_t                ipman_migrations_count;
 
 /*
- * Create a fresh empty database from the current schema baseline, or apply
- * all migrations with version > current for an existing database. Each
- * historical migration runs in its own transaction; on failure the
- * transaction rolls back and the function returns non-zero. A migration
- * whose stored checksum does not match the embedded one is also a fatal
+ * Apply all migrations with version > current. A fresh empty database
+ * has current = 0, so every embedded migration is applied; an existing
+ * database applies only those newer than the recorded version. Each
+ * migration runs in its own transaction; on failure the transaction
+ * rolls back and the function returns non-zero. A migration whose
+ * stored checksum does not match the embedded one is also a fatal
  * error (migrations are append-only).
  *
  * On success, writes the resulting schema version into *out_version and
