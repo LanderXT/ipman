@@ -186,6 +186,10 @@ TASK_OPS_TEST_OBJS := \
 
 PHASE13_TEST_OBJS := $(TASK_OPS_TEST_OBJS)
 
+CLI_SELECTOR_TEST_OBJS := $(TASK_OPS_TEST_OBJS) \
+    $(BUILD_DIR)/cli_selector.o \
+    $(BUILD_DIR)/instruction_ops.o
+
 AGENT_DOCS_TEST_OBJS := \
     $(BUILD_DIR)/agent_docs.o \
     $(BUILD_DIR)/comment_ops.o \
@@ -222,6 +226,10 @@ $(BUILD_DIR)/tests/test_phase13_integrity: tests/unit/test_phase13_integrity.c $
 	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^ $(LDLIBS)
 
 $(BUILD_DIR)/tests/test_agent_docs: tests/unit/test_agent_docs.c $(AGENT_DOCS_TEST_OBJS)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^ $(LDLIBS)
+
+$(BUILD_DIR)/tests/test_cli_selector: tests/unit/test_cli_selector.c $(CLI_SELECTOR_TEST_OBJS)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^ $(LDLIBS)
 

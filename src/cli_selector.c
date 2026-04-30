@@ -234,6 +234,23 @@ static int single_kind(cli_selector_kind_t mask, cli_selector_kind_t *out) {
     return 1;
 }
 
+/* Format the accepted kinds in a bitmask as "task", "task or phase",
+ * "task, phase, or plan", etc. Always writes a NUL-terminated string. */
+static void format_kinds(cli_selector_kind_t mask, char *out, size_t out_size) {
+    if (out == NULL || out_size == 0) return;
+    out[0] = '\0';
+    const char *names[3];
+    size_t n = 0;
+    for (size_t i = 0; i < k_kinds_n && n < 3; i++)
+        if ((mask & k_kinds[i].kind) != 0) names[n++] = k_kinds[i].display;
+
+    if (n == 0)       snprintf(out, out_size, "(none)");
+    else if (n == 1)  snprintf(out, out_size, "%s", names[0]);
+    else if (n == 2)  snprintf(out, out_size, "%s or %s", names[0], names[1]);
+    else              snprintf(out, out_size, "%s, %s, or %s",
+                               names[0], names[1], names[2]);
+}
+
 int cli_resolve_selector(sqlite3 *db,
                          const char *arg,
                          cli_selector_kind_t expected,
@@ -253,9 +270,11 @@ int cli_resolve_selector(sqlite3 *db,
         const kind_meta_t *m = &k_kinds[i];
         if (strncmp(arg, m->prefix, m->prefix_len) != 0) continue;
         if ((expected & m->kind) == 0) {
+            char accepted[64];
+            format_kinds(expected, accepted, sizeof accepted);
             set_err(err_buf, err_buf_size,
-                    "selector `%s` is a %s, but this command does not accept %ss",
-                    arg, m->display, m->display);
+                    "selector `%s` is a %s, but this command requires %s",
+                    arg, m->display, accepted);
             return -1;
         }
         long id = 0;
