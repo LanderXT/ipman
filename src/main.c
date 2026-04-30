@@ -398,6 +398,7 @@ static const char *parse_command(const char *arg) {
     if (strcmp(arg, "show")     == 0 || strcmp(arg, "-SH") == 0 || strcmp(arg, "--show")    == 0) return "show";
     if (strcmp(arg, "log")      == 0 || strcmp(arg, "-LG") == 0 || strcmp(arg, "--log")     == 0) return "log";
     if (strcmp(arg, "start")    == 0 ||                              strcmp(arg, "--start")   == 0) return "start";
+    if (strcmp(arg, "close")    == 0 ||                              strcmp(arg, "--close")   == 0) return "close";
     if (strcmp(arg, "b64")      == 0 || strcmp(arg, "-B")  == 0 || strcmp(arg, "--b64")     == 0) return "b64";
     if (strcmp(arg, "usage")    == 0 || strcmp(arg, "-U")  == 0 || strcmp(arg, "--usage")   == 0) return "usage";
     return NULL;
@@ -689,6 +690,110 @@ static int run_start(const char *selector) {
     return 0;
 }
 
+/* --close <selector> --summary <text> --comment <text>
+ *                   [--lessons <text>] [--open-items <text>] [--followup]
+ * Resolves a task selector, then dispatches task.close with the closure
+ * fields. summary/comment are required (server-side too — validating CLI-side
+ * gives a sharper diagnostic). */
+static int run_close(int argc, char **argv) {
+    const char *selector  = NULL;
+    const char *summary   = NULL;
+    const char *comment   = NULL;
+    const char *lessons   = NULL;
+    const char *open_items = NULL;
+    int         followup  = 0;
+
+    for (int i = 2; i < argc; ++i) {
+        if (strcmp(argv[i], "--summary") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman close: --summary requires a value\n");
+                return 1;
+            }
+            summary = argv[++i];
+        } else if (strcmp(argv[i], "--comment") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman close: --comment requires a value\n");
+                return 1;
+            }
+            comment = argv[++i];
+        } else if (strcmp(argv[i], "--lessons") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman close: --lessons requires a value\n");
+                return 1;
+            }
+            lessons = argv[++i];
+        } else if (strcmp(argv[i], "--open-items") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman close: --open-items requires a value\n");
+                return 1;
+            }
+            open_items = argv[++i];
+        } else if (strcmp(argv[i], "--followup") == 0) {
+            followup = 1;
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "ipman close: unknown flag: %s\n", argv[i]);
+            return 1;
+        } else if (selector == NULL) {
+            selector = argv[i];
+        } else {
+            fprintf(stderr, "ipman close: unexpected extra argument: %s\n",
+                    argv[i]);
+            return 1;
+        }
+    }
+
+    if (selector == NULL || summary == NULL || comment == NULL) {
+        if (selector == NULL)
+            fprintf(stderr, "ipman close: <selector> is required\n");
+        if (summary == NULL)
+            fprintf(stderr, "ipman close: --summary is required\n");
+        if (comment == NULL)
+            fprintf(stderr, "ipman close: --comment is required\n");
+        fprintf(stderr,
+                "usage: ipman --close <task-uid|label|id> "
+                "--summary <text> --comment <text> "
+                "[--lessons <text>] [--open-items <text>] [--followup]\n");
+        return 1;
+    }
+
+    char home[PATH_MAX], dbpath[PATH_MAX];
+    sqlite3 *db = NULL;
+    if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0)
+        return 1;
+
+    long id = 0;
+    cli_selector_kind_t kind = 0;
+    char err[CLI_SELECTOR_ERR_LEN];
+    if (cli_resolve_selector(db, selector, CLI_SELECTOR_KIND_TASK,
+                             &id, &kind, err, sizeof err) != 0) {
+        fprintf(stderr, "ipman close: %s\n", err);
+        ipman_db_close(db);
+        return 1;
+    }
+
+    cJSON *p = cJSON_CreateObject();
+    cJSON_AddNumberToObject(p, "id",              (double)id);
+    cJSON_AddStringToObject(p, "outcome_summary", summary);
+    cJSON_AddStringToObject(p, "closing_comment", comment);
+    if (lessons    != NULL) cJSON_AddStringToObject(p, "lessons_learned",    lessons);
+    if (open_items != NULL) cJSON_AddStringToObject(p, "open_items_summary", open_items);
+    if (followup)           cJSON_AddBoolToObject  (p, "followup_needed",    1);
+    cJSON *result = call_op(db, "task.close", p);
+    cJSON_Delete(p);
+    ipman_db_close(db);
+
+    if (result == NULL) return 1;
+
+    cJSON *task  = cJSON_GetObjectItemCaseSensitive(result, "task");
+    cJSON *title = task ? cJSON_GetObjectItemCaseSensitive(task, "title") : NULL;
+    if (title && cJSON_IsString(title))
+        fprintf(stdout, "closed task %ld: %s\n", id, title->valuestring);
+    else
+        fprintf(stdout, "closed task %ld\n", id);
+    cJSON_Delete(result);
+    return 0;
+}
+
 static int run_log(void) {
     char home[PATH_MAX], dbpath[PATH_MAX];
     sqlite3 *db = NULL;
@@ -776,6 +881,9 @@ int main(int argc, char **argv) {
             return 1;
         }
         return run_start(argv[2]);
+    }
+    if (cmd != NULL && strcmp(cmd, "close") == 0) {
+        return run_close(argc, argv);
     }
     if (cmd != NULL && strcmp(cmd, "b64") == 0) {
         g_b64_mode = 1;
