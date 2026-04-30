@@ -39,7 +39,7 @@ Modern coding agents are good at executing one task; they are bad at remembering
 
 `ipman` is shaped around that need:
 
-- **Plans, phases, and tasks** are first-class objects with stable identifiers (`plan_1`, `phase_3`, `task_42`) — agents can reference them across sessions without scanning prose.
+- **Plans, phases, and tasks** are first-class objects with stable numeric identifiers — agents can reference them across sessions without scanning prose.
 - **Closure records** preserve outcomes: when a task is closed, cancelled, deferred, or replaced, the audit trail keeps the *why*, not just the new status.
 - **Standing instructions** attach durable guidance to a plan or phase ("preserve backward compatibility until v2"), so future agents pick up the constraints automatically.
 - **Encrypted at rest** by default — your in-progress work and design notes never sit in plaintext on disk.
@@ -89,7 +89,7 @@ ipman --status                   # nothing yet — no active plan
 …or as an agent (the actual primary use case), via JSON on stdin:
 
 ```sh
-echo '{"protocol_version":1,"request_id":"r1","actor":"agent",
+echo '{"protocol_version":2,"request_id":"r1","actor":"agent",
        "op":"plan.create",
        "params":{"title":"Ship login refactor",
                  "summary":"Split auth from session handling",
@@ -100,7 +100,7 @@ Response:
 
 ```json
 {"request_id":"r1","ok":true,"result":{"plan":{
-  "uid":"plan_1","label":"ship-login-refactor","id":1,"code":"P1",
+  "id":1,"label":"ship-login-refactor",
   "title":"Ship login refactor","status":"open","priority":"high",
   "created_at":"2026-04-30T12:33:11.373Z", ...}}}
 ```
@@ -156,15 +156,16 @@ Plan ── one per implementation effort, holds outcome and tags
       └── Task ── atomic units of work; carry status, type, priority, origin
 ```
 
-Every entity carries identifier fields that fall into **three layers**: the row's identity, the handles you reference it by, and the breadcrumb that shows it on screen.
+**`id` is canonical.** Every entity is identified by an integer `id` for both input and output. Pass `id` to every op that needs to reference an existing plan, phase, or task; `id` is what API responses return.
 
-| Layer | Field(s) | What it is and when to use it |
+| Field | Role | Notes |
 |---|---|---|
-| **Identity** | `id` | The internal SQLite primary key (e.g. `42`). Use when an op asks for `id`. Workspace-scoped — two workspaces both have a `task_1`. |
-| **Handles** | `uid`, `label`, `code` | Three ways an op can accept the entity as a selector. `uid` (`task_42`) is type-prefixed and immutable — preferred for agent-to-agent references. `label` (`move-jwt-verification`) is a human-friendly slug, scoped per parent and renameable — preferred in prose and comments. `code` (`P1`) exists only on plans — short shorthand for the most-referenced entity. |
-| **Breadcrumb** | `entity_ref` (and `*_ref` variants) | Computed at read time, emitted on `event.list` results and task relations as `P1`, `P1/F3`, `P1/T7`. Output-only: derived from mutable upstream state (`phase.move` rewrites `P1/F3` → `P1/F2`), so do not store it and **do not pass it back as a selector**. |
+| `id` | Canonical input and output identifier | Workspace-scoped integer (e.g. `42`). The only selector accepted by `*.get`, `*.update`, lifecycle ops, etc. |
+| `label` | Human-readable slug | Auto-derived from `title` (or supplied at creation). Scoped per parent and renameable. Returned on responses for human display. |
+| `code` | User-supplied plan shorthand (input only) | Short label like `REL-001`, set at `plan.create`. Used as a `plan.lookup` key and `plan.activate` selector. Not echoed in API responses. |
+| `uid` | Stored row identifier (storage only) | Internal `task_<id>`/`phase_<id>`/`plan_<id>` form. Persisted in the database for archival/export round-trip but not surfaced in any API response. |
 
-Quick guide: pass `uid` between agents and across sessions; type `label` in comments; show `entity_ref` to humans.
+To resolve a `label` or `code` to an `id`, call the matching `*.lookup` op (`plan.lookup`, `phase.lookup`, `task.lookup`). Lookup ops are the single legitimate way to translate human-readable handles into the canonical `id`.
 
 ### Status, resolution, and origin are different things
 
@@ -256,9 +257,9 @@ This is *defense at rest*, not a sandbox. Anyone who can run `ipman` as your use
 ipman -I  / --init                  Initialize workspace
 ipman -S  / --status                Active plan, current phase, current task, pending count
 ipman -L  / --ls                    List pending tasks for the active plan
-ipman -SH / --show <selector>       Detail for a task or phase (uid, label, or id)
+ipman -SH / --show <selector>       Detail for a task or phase (id, or label scoped to active plan)
 ipman -LG / --log                   Recent workspace events
-ipman -R  / --render <plan>         Render plan as Markdown (code, uid, label, or id)
+ipman -R  / --render <plan>         Render plan as Markdown (id, code, or label)
 ipman -U  / --usage                 Show full help
 
 Maintenance:
