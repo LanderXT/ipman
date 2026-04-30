@@ -401,6 +401,8 @@ static const char *parse_command(const char *arg) {
     if (strcmp(arg, "close")    == 0 ||                              strcmp(arg, "--close")   == 0) return "close";
     if (strcmp(arg, "cancel")   == 0 ||                              strcmp(arg, "--cancel")  == 0) return "cancel";
     if (strcmp(arg, "defer")    == 0 ||                              strcmp(arg, "--defer")   == 0) return "defer";
+    if (strcmp(arg, "current")  == 0 ||                              strcmp(arg, "--current") == 0) return "current";
+    if (strcmp(arg, "activate") == 0 ||                              strcmp(arg, "--activate")== 0) return "activate";
     if (strcmp(arg, "b64")      == 0 || strcmp(arg, "-B")  == 0 || strcmp(arg, "--b64")     == 0) return "b64";
     if (strcmp(arg, "usage")    == 0 || strcmp(arg, "-U")  == 0 || strcmp(arg, "--usage")   == 0) return "usage";
     return NULL;
@@ -962,6 +964,88 @@ static int run_defer(int argc, char **argv) {
     return 0;
 }
 
+/* --current <selector>: human verb to set the current task or phase.
+ * The resolver auto-detects kind (task or phase) and routes to the matching
+ * op. Plans are rejected at the resolver — use --activate for plans. */
+static int run_current(const char *selector) {
+    char home[PATH_MAX], dbpath[PATH_MAX];
+    sqlite3 *db = NULL;
+    if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0)
+        return 1;
+
+    long id = 0;
+    cli_selector_kind_t kind = 0;
+    char err[CLI_SELECTOR_ERR_LEN];
+    if (cli_resolve_selector(db, selector, CLI_SELECTOR_KIND_TASK_OR_PHASE,
+                             &id, &kind, err, sizeof err) != 0) {
+        fprintf(stderr, "ipman current: %s\n", err);
+        ipman_db_close(db);
+        return 1;
+    }
+
+    const char *op_name      = (kind == CLI_SELECTOR_KIND_TASK)
+                               ? "task.set_current" : "phase.set_current";
+    const char *entity_label = (kind == CLI_SELECTOR_KIND_TASK)
+                               ? "task" : "phase";
+    const char *context_key  = (kind == CLI_SELECTOR_KIND_TASK)
+                               ? "current_task" : "current_phase";
+
+    cJSON *p = cJSON_CreateObject();
+    cJSON_AddNumberToObject(p, "id", (double)id);
+    cJSON *result = call_op(db, op_name, p);
+    cJSON_Delete(p);
+    ipman_db_close(db);
+
+    if (result == NULL) return 1;
+
+    cJSON *context = cJSON_GetObjectItemCaseSensitive(result, "context");
+    cJSON *entity  = context ? cJSON_GetObjectItemCaseSensitive(context, context_key) : NULL;
+    cJSON *title   = entity  ? cJSON_GetObjectItemCaseSensitive(entity, "title")      : NULL;
+    if (title && cJSON_IsString(title))
+        fprintf(stdout, "set current %s %ld: %s\n", entity_label, id, title->valuestring);
+    else
+        fprintf(stdout, "set current %s %ld\n", entity_label, id);
+    cJSON_Delete(result);
+    return 0;
+}
+
+/* --activate <selector>: human verb to set the active plan for the workspace.
+ * Selector must resolve to a plan (kind mismatch is rejected by the resolver). */
+static int run_activate(const char *selector) {
+    char home[PATH_MAX], dbpath[PATH_MAX];
+    sqlite3 *db = NULL;
+    if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0)
+        return 1;
+
+    long id = 0;
+    cli_selector_kind_t kind = 0;
+    char err[CLI_SELECTOR_ERR_LEN];
+    if (cli_resolve_selector(db, selector, CLI_SELECTOR_KIND_PLAN,
+                             &id, &kind, err, sizeof err) != 0) {
+        fprintf(stderr, "ipman activate: %s\n", err);
+        ipman_db_close(db);
+        return 1;
+    }
+
+    cJSON *p = cJSON_CreateObject();
+    cJSON_AddNumberToObject(p, "id", (double)id);
+    cJSON *result = call_op(db, "plan.activate", p);
+    cJSON_Delete(p);
+    ipman_db_close(db);
+
+    if (result == NULL) return 1;
+
+    cJSON *context = cJSON_GetObjectItemCaseSensitive(result, "context");
+    cJSON *plan    = context ? cJSON_GetObjectItemCaseSensitive(context, "active_plan") : NULL;
+    cJSON *title   = plan    ? cJSON_GetObjectItemCaseSensitive(plan, "title")          : NULL;
+    if (title && cJSON_IsString(title))
+        fprintf(stdout, "activated plan %ld: %s\n", id, title->valuestring);
+    else
+        fprintf(stdout, "activated plan %ld\n", id);
+    cJSON_Delete(result);
+    return 0;
+}
+
 static int run_log(void) {
     char home[PATH_MAX], dbpath[PATH_MAX];
     sqlite3 *db = NULL;
@@ -1058,6 +1142,20 @@ int main(int argc, char **argv) {
     }
     if (cmd != NULL && strcmp(cmd, "defer") == 0) {
         return run_defer(argc, argv);
+    }
+    if (cmd != NULL && strcmp(cmd, "current") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "usage: ipman --current <task-or-phase-uid|label|id>\n");
+            return 1;
+        }
+        return run_current(argv[2]);
+    }
+    if (cmd != NULL && strcmp(cmd, "activate") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "usage: ipman --activate <plan-uid|label|id>\n");
+            return 1;
+        }
+        return run_activate(argv[2]);
     }
     if (cmd != NULL && strcmp(cmd, "b64") == 0) {
         g_b64_mode = 1;
