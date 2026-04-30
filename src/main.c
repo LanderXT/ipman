@@ -397,6 +397,7 @@ static const char *parse_command(const char *arg) {
     if (strcmp(arg, "ls")       == 0 || strcmp(arg, "-L")  == 0 || strcmp(arg, "--ls")      == 0) return "ls";
     if (strcmp(arg, "show")     == 0 || strcmp(arg, "-SH") == 0 || strcmp(arg, "--show")    == 0) return "show";
     if (strcmp(arg, "log")      == 0 || strcmp(arg, "-LG") == 0 || strcmp(arg, "--log")     == 0) return "log";
+    if (strcmp(arg, "start")    == 0 ||                              strcmp(arg, "--start")   == 0) return "start";
     if (strcmp(arg, "b64")      == 0 || strcmp(arg, "-B")  == 0 || strcmp(arg, "--b64")     == 0) return "b64";
     if (strcmp(arg, "usage")    == 0 || strcmp(arg, "-U")  == 0 || strcmp(arg, "--usage")   == 0) return "usage";
     return NULL;
@@ -651,6 +652,43 @@ static int run_show(const char *selector) {
     return 0;
 }
 
+/* --start <selector>: human verb to mark a task in_progress.
+ * Selector must resolve to a task (kind mismatch is rejected by the resolver). */
+static int run_start(const char *selector) {
+    char home[PATH_MAX], dbpath[PATH_MAX];
+    sqlite3 *db = NULL;
+    if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0)
+        return 1;
+
+    long id = 0;
+    cli_selector_kind_t kind = 0;
+    char err[CLI_SELECTOR_ERR_LEN];
+    if (cli_resolve_selector(db, selector, CLI_SELECTOR_KIND_TASK,
+                             &id, &kind, err, sizeof err) != 0) {
+        fprintf(stderr, "ipman start: %s\n", err);
+        ipman_db_close(db);
+        return 1;
+    }
+
+    cJSON *p = cJSON_CreateObject();
+    cJSON_AddNumberToObject(p, "id",     (double)id);
+    cJSON_AddStringToObject(p, "status", "in_progress");
+    cJSON *result = call_op(db, "task.transition", p);
+    cJSON_Delete(p);
+    ipman_db_close(db);
+
+    if (result == NULL) return 1;
+
+    cJSON *task  = cJSON_GetObjectItemCaseSensitive(result, "task");
+    cJSON *title = task ? cJSON_GetObjectItemCaseSensitive(task, "title") : NULL;
+    if (title && cJSON_IsString(title))
+        fprintf(stdout, "started task %ld: %s\n", id, title->valuestring);
+    else
+        fprintf(stdout, "started task %ld\n", id);
+    cJSON_Delete(result);
+    return 0;
+}
+
 static int run_log(void) {
     char home[PATH_MAX], dbpath[PATH_MAX];
     sqlite3 *db = NULL;
@@ -731,6 +769,13 @@ int main(int argc, char **argv) {
             return 1;
         }
         return run_show(argv[2]);
+    }
+    if (cmd != NULL && strcmp(cmd, "start") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "usage: ipman --start <task-uid|label|id>\n");
+            return 1;
+        }
+        return run_start(argv[2]);
     }
     if (cmd != NULL && strcmp(cmd, "b64") == 0) {
         g_b64_mode = 1;
