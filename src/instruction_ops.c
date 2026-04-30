@@ -1,3 +1,7 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Homero Leal
+ */
+
 #include "instruction_ops.h"
 
 #include "db.h"

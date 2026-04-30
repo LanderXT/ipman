@@ -1,3 +1,7 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Homero Leal
+ */
+
 #include "json_helpers.h"
 
 void ipman_json_add_text_or_null(cJSON *obj, const char *key,

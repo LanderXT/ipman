@@ -1,0 +1,36 @@
+ipman — Implementation Plan Manager
+Copyright 2026 Homero Leal
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this software except in compliance with the License. You may obtain a
+copy of the License in the accompanying LICENSE file or at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+================================================================================
+Third-party software
+================================================================================
+
+This product includes or links against the following third-party components.
+Each component is governed by the license terms of its respective project; the
+references below are informational only.
+
+* cJSON
+  https://github.com/DaveGamble/cJSON
+  MIT License
+  Vendored at third_party/cjson/.
+
+* SQLCipher
+  https://www.zetetic.net/sqlcipher/
+  BSD-3-Clause License (with OpenSSL exception, where applicable)
+  Linked at runtime; required to build and run.
+
+* libsodium
+  https://libsodium.org/
+  ISC License
+  Linked at runtime; required to build and run.
+
+* SQLite
+  https://www.sqlite.org/
+  Public Domain
+  Provided through SQLCipher; the SQLite C API is implemented by SQLCipher.

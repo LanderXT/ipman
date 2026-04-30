@@ -1,5 +1,9 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Homero Leal
+ */
+
 /*
- * ipman — Plan Manager
+ * ipman — Implementation Plan Manager
  *
  * Per-invocation flow: require initialized home + DB, read stdin, parse
  * request, dispatch to handler, serialize response on stdout. Logs go to
@@ -125,7 +129,7 @@ static int emit_fatal(const char *request_id, ipman_error_code_t code,
 
 static void print_usage(FILE *out) {
     fputs(
-        "ipman - Plan Manager\n"
+        "ipman - Implementation Plan Manager\n"
         "\n"
         "Each form below is interchangeable with its bare-word and (where\n"
         "shown) short-flag equivalents: `ipman -S` = `ipman --status` =\n"

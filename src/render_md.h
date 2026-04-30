@@ -1,3 +1,7 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Homero Leal
+ */
+
 /* render_md — Markdown implementation plan document renderer. */
 
 #ifndef IPMAN_RENDER_MD_H

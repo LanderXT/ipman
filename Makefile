@@ -1,4 +1,4 @@
-# ipman — Plan Manager
+# ipman — Implementation Plan Manager
 #
 # Usage:
 #   make                 # dev build (default)

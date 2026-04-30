@@ -1,3 +1,7 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Homero Leal
+ */
+
 #ifndef IPMAN_EXPORT_OPS_H
 #define IPMAN_EXPORT_OPS_H
 
