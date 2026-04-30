@@ -433,7 +433,7 @@ static char *render_start_here(const char *home, const char *db_path,
     if (append_frontmatter(&b, "start_here", generated_at, NULL, NULL, NULL) != 0) return NULL;
     if (buf_appendf(&b,
         "# START HERE\n\n"
-        "`ipman` is a local JSON-in / JSON-out plan manager for agents and scripts. "
+        "`ipman` (Implementation Plan Manager) is a local JSON-in / JSON-out tool for agents and scripts. "
         "It stores structured plans, phases, tasks, instructions, comments, closure memory, relations, and audit events in SQLite.\n\n"
         "- Effective workspace: `%s`\n"
         "- Database: `%s`\n"
