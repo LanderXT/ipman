@@ -18,7 +18,16 @@
  * strings with %s, %d, etc.
  *
  * No timestamp is emitted — the shell/systemd journal adds one.
+ *
+ * Verbosity is controlled by the IPMAN_LOG env var: debug | info | warn |
+ * error (default warn). Calls below this threshold are dropped silently.
+ * ipman_log_init() reads the env and (re)sets the threshold; call it once
+ * at process start, before any log call. Idempotent. Unknown or empty
+ * values fall back to the default — the same warn-and-default pattern used
+ * for IPMAN_MAX_REQUEST_BYTES.
  */
+
+void ipman_log_init(void);
 
 void ipman_log_info(const char *msg, const char *fmt, ...);
 void ipman_log_warn(const char *msg, const char *fmt, ...);

@@ -167,6 +167,12 @@ $(BUILD_DIR)/tests/test_cli_selector: tests/unit/test_cli_selector.c $(CLI_SELEC
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^ $(LDLIBS)
 
+# test_log links only log.o — log.c has no transitive deps, so we keep
+# the test surface minimal and fast.
+$(BUILD_DIR)/tests/test_log: tests/unit/test_log.c $(BUILD_DIR)/log.o
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -Isrc -o $@ $^
+
 unit: $(UNIT_BIN)
 	@set -e; for t in $(UNIT_BIN); do \
 		echo "--- $$t ---"; \

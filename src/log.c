@@ -6,6 +6,28 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef enum {
+    LEVEL_DEBUG = 0,
+    LEVEL_INFO  = 1,
+    LEVEL_WARN  = 2,
+    LEVEL_ERROR = 3,
+} ipman_log_level_t;
+
+static ipman_log_level_t g_min_level = LEVEL_WARN;
+
+void ipman_log_init(void) {
+    g_min_level = LEVEL_WARN;
+    const char *v = getenv("IPMAN_LOG");
+    if (v == NULL || *v == '\0') return;
+    if      (strcmp(v, "debug") == 0) g_min_level = LEVEL_DEBUG;
+    else if (strcmp(v, "info")  == 0) g_min_level = LEVEL_INFO;
+    else if (strcmp(v, "warn")  == 0) g_min_level = LEVEL_WARN;
+    else if (strcmp(v, "error") == 0) g_min_level = LEVEL_ERROR;
+    /* Unknown values: keep default WARN (already reset above). */
+}
 
 static void write_escaped(const char *s) {
     fputc('"', stderr);
@@ -35,6 +57,7 @@ static void ipman_log_emit(const char *level, const char *msg, const char *fmt, 
 }
 
 void ipman_log_info(const char *msg, const char *fmt, ...) {
+    if (g_min_level > LEVEL_INFO) return;
     va_list ap;
     va_start(ap, fmt);
     ipman_log_emit("info", msg, fmt, ap);
@@ -42,6 +65,7 @@ void ipman_log_info(const char *msg, const char *fmt, ...) {
 }
 
 void ipman_log_warn(const char *msg, const char *fmt, ...) {
+    if (g_min_level > LEVEL_WARN) return;
     va_list ap;
     va_start(ap, fmt);
     ipman_log_emit("warn", msg, fmt, ap);
@@ -49,6 +73,7 @@ void ipman_log_warn(const char *msg, const char *fmt, ...) {
 }
 
 void ipman_log_error(const char *msg, const char *fmt, ...) {
+    if (g_min_level > LEVEL_ERROR) return;
     va_list ap;
     va_start(ap, fmt);
     ipman_log_emit("error", msg, fmt, ap);
