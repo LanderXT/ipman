@@ -215,6 +215,13 @@ static cJSON *closure_from_row(sqlite3_stmt *stmt) {
     ipman_json_add_text_or_null(closure, "author", sqlite3_column_text(stmt, 11));
     cJSON_AddNumberToObject(closure, "event_id",
                             (double)sqlite3_column_int64(stmt, 12));
+    ipman_json_add_text_or_null(closure, "commit_sha", sqlite3_column_text(stmt, 13));
+    if (sqlite3_column_type(stmt, 14) != SQLITE_NULL) {
+        cJSON_AddBoolToObject(closure, "dirty",
+                              sqlite3_column_int(stmt, 14) ? 1 : 0);
+    }
+    ipman_json_add_json_or_null(closure, "files_changed",
+                                sqlite3_column_text(stmt, 15));
     return closure;
 }
 
@@ -886,7 +893,8 @@ int ipman_op_closure_get(const ipman_request_t *req, sqlite3 *db,
     const char *sql =
         "SELECT id, entity_type, entity_id, closure_status, resolution, "
         "outcome_summary, closing_comment, lessons_learned, "
-        "open_items_summary, followup_needed, created_at, author, event_id "
+        "open_items_summary, followup_needed, created_at, author, event_id, "
+        "commit_sha, dirty, files_changed_json "
         "FROM closure_records "
         "WHERE entity_type = ? AND entity_id = ? "
         "ORDER BY id DESC;";
