@@ -33,6 +33,7 @@
 #include "skill_install.h"
 #include "cli_output.h"
 #include "cli_selector.h"
+#include "version.h"
 
 #include <cJSON.h>
 
@@ -130,8 +131,8 @@ static int emit_fatal(const char *request_id, ipman_error_code_t code,
 }
 
 static void print_usage(FILE *out) {
+    fprintf(out, "ipman %s - Implementation Plan Manager\n", IPMAN_VERSION);
     fputs(
-        "ipman - Implementation Plan Manager\n"
         "\n"
         "Each form below is interchangeable with its bare-word and (where\n"
         "shown) short-flag equivalents: `ipman -S` = `ipman --status` =\n"

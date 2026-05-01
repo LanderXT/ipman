@@ -433,14 +433,16 @@ The "single source of truth" pattern is deliberate: the dispatch table in `src/d
 
 ## Status and roadmap
 
-**v1.0** — initial public release. Stable surfaces:
+**v2.1.0** — current release. Stable surfaces:
 
-- JSON request/response protocol (`protocol_version: 1`)
-- All 61 operations
-- Encrypted SQLite storage layout
-- `.ipman/` generated documentation tree
-- Bundled Claude Code skill
+- JSON request/response protocol at `protocol_version: 2` (unchanged from v2.0; v2.1 added zero protocol ops)
+- All 64 operations across nine entities
+- Encrypted SQLite storage layout (SQLCipher + Argon2id)
+- `.ipman/` generated documentation tree (regenerated on every `init`)
+- Bundled Claude Code skill (also installed for Codex)
 - Optional MCP server (`mcp/ipman_mcp.py`) for MCP-aware clients
+- Human CLI veneer: `--start`, `--close`, `--cancel`, `--defer`, `--current`, `--activate`, `--next`, plus `--dry-run` (see [`docs/v2.1-ergonomics.md`](docs/v2.1-ergonomics.md))
+- Structured closure evidence: `validations_run` and `decisions` on `task.close`, plus auto-captured git context (`commit_sha`, `dirty`, `files_changed`) when running inside a work tree
 
 Planned (no commitment yet):
 
@@ -449,7 +451,7 @@ Planned (no commitment yet):
 - Optional plain-SQLite mode for environments where SQLCipher is hard to install
 - Additional task relationship types (`blocks`, `informs`, …)
 
-Breaking changes bump `protocol_version` and ship a migration. The current cutover is documented in [`docs/v2-migration.md`](docs/v2-migration.md): every removed selector and output field, with before/after snippets. The embedded migration runner already supports the schema upgrade path.
+Breaking wire changes bump `protocol_version` and ship a migration; the v1 → v2 cutover is documented in [`docs/v2-migration.md`](docs/v2-migration.md). v2.1 was purely additive over v2.0 — no wire changes, no client migration required.
 
 ## Contributing
 
