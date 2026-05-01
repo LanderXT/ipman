@@ -1,3 +1,10 @@
 build/
 .ipman/
 .codex
+
+# pman audit trail: ignore the local DB and auto-generated agent docs
+# (timestamp/path churn on every refresh), but keep durable handoff
+# snapshots committed for cross-machine, cross-agent continuity.
+# Negate-from-ignored-dir doesn't work in git — ignore contents instead.
+/.pman/*
+!/.pman/exports/
