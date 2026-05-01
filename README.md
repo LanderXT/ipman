@@ -136,7 +136,7 @@ The same data is reachable two ways. Pick the surface by who is calling.
 |---|---|---|
 | Invocation | `… \| ipman` (JSON envelope on stdin) | `ipman <subcommand>` |
 | Output | JSON on stdout, exit code via [error semantics](#error-semantics) | Box-drawn tables on stdout, errors on stderr |
-| Operations | All 64 operations (`plan.create`, `task.transition`, `closure.get`, …) | Read-only views (`status`, `ls`, `show`, `log`, `next`, `render`) plus a curated set of write verbs (`start`, `close`, `cancel`, `defer`, `current`, `activate`) |
+| Operations | All 65 operations (`plan.create`, `task.transition`, `closure.get`, …) | Read-only views (`status`, `ls`, `show`, `log`, `next`, `render`) plus a curated set of write verbs (`start`, `close`, `cancel`, `defer`, `close-phase`, `cancel-phase`, `current`, `activate`) |
 | Mutations | Yes — full surface | Yes — but only via the curated verbs above; each one is a thin wrapper over the same JSON op an agent would send |
 | Use case | Agent-driven planning, transitions, comments | Inspection, review, supervision, routine task transitions |
 
@@ -209,7 +209,7 @@ Response:
   "created_at":"2026-04-30T12:33:11.373Z", ...}}}
 ```
 
-Use `ipman --b64` when shell escaping is awkward — stdin and stdout become base64-encoded JSON. The full operation surface (64 ops across nine entities) is enumerated under [Operations reference](#operations-reference).
+Use `ipman --b64` when shell escaping is awkward — stdin and stdout become base64-encoded JSON. The full operation surface (65 ops across ten entities) is enumerated under [Operations reference](#operations-reference).
 
 ### How agents discover the API
 
@@ -282,7 +282,10 @@ For the design rationale, the no-goals, and migration patterns from hand-rolled 
 ipman -S  / --status                Active plan, current phase, current task, pending count
 ipman -L  / --ls                    List pending tasks for the active plan
 ipman -SH / --show <selector>       Detail for a task or phase
-ipman -LG / --log                   Recent workspace events
+ipman -LG / --log [--summary-only] [--limit N]
+                                    Recent workspace events. --summary-only drops the
+                                    Details column; --limit N (1-500, default 20) caps
+                                    rows (out-of-range values are clamped)
 ipman -N  / --next                  Active plan, cursor, instructions, and "Up next" pending tasks
 ipman -R  / --render <plan>         Render plan as Markdown
 ```
@@ -302,6 +305,13 @@ ipman --cancel   <selector> --summary <text> --comment <text>
                             Cancel a task with closure record
 ipman --defer    <selector> --reason-text <text> [--reason-code <code>]
                             Defer a task with reason
+ipman --close-phase  <selector> --summary <text> --comment <text>
+                            [--lessons <text>] [--open-items <text>] [--followup]
+                            Close a phase with closure record (all child tasks must
+                            be terminal)
+ipman --cancel-phase <selector> --summary <text> --comment <text>
+                            [--lessons <text>] [--open-items <text>] [--followup]
+                            Cancel a phase with closure record
 ipman --dry-run             Combine with any write verb to print the JSON envelope
                             that would be sent and exit without touching the DB
 ```
@@ -366,7 +376,7 @@ ipman --close review-pr-42 \
 
 ## Operations reference
 
-The runtime exposes 64 operations across nine entities. The full, always-current list lives at `.ipman/indexes/ipman.index.operations.md` after init; here is the shape:
+The runtime exposes 65 operations across ten entities. The full, always-current list lives at `.ipman/indexes/ipman.index.operations.md` after init; here is the shape:
 
 | Entity | Common verbs |
 |---|---|
@@ -455,7 +465,7 @@ The "single source of truth" pattern is deliberate: the dispatch table in `src/d
 **v2.1.0** — current release. Stable surfaces:
 
 - JSON request/response protocol at `protocol_version: 2` (unchanged from v2.0; v2.1 added zero protocol ops)
-- All 64 operations across nine entities
+- All 65 operations across ten entities
 - Encrypted SQLite storage layout (SQLCipher + Argon2id)
 - `.ipman/` generated documentation tree (regenerated on every `init`)
 - Bundled Claude Code skill (also installed for Codex)
