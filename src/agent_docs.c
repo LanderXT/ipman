@@ -586,7 +586,7 @@ static char *render_enums_doc(const char *generated_at) {
         "- Task type: `task`, `research`, `bug`, `decision`, `review`, `documentation`.\n"
         "- Origin type: `planned`, `addendum`, `discovered`, `replacement`, `carryover`, `external_request`.\n"
         "- Entity type: `plan`, `phase`, `task`.\n"
-        "- Task relation type: `blocks`, `blocked_by`, `related`, `duplicates`, `replaces`, `parent_child`.\n"
+        "- Task relation type: `blocks`, `blocked_by`, `related`, `duplicates`, `replaces`.\n"
         "- Dependency operation relation type: `blocks`, `blocked_by`, `related`, `duplicates`.\n"
         "- Event type: `plan_created`, `plan_updated`, `plan_closed`, `plan_archived`, `plan_reopened`, `plan_activated`, `plan_deactivated`, `phase_created`, `phase_updated`, `phase_moved`, `phase_closed`, `phase_reopened`, `phase_current_changed`, `task_created`, `task_updated`, `task_linked_external`, `task_status_changed`, `task_deferred`, `task_canceled`, `task_replaced`, `task_reopened`, `task_closed`, `task_current_changed`, `comment_added`, `comment_updated`, `comment_invalidated`, `instruction_added`, `instruction_updated`, `instruction_invalidated`.\n") != 0) return NULL;
     return buf_take(&b);
