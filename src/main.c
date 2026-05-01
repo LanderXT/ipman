@@ -130,6 +130,16 @@ static int emit_fatal(const char *request_id, ipman_error_code_t code,
     return 1;
 }
 
+/* Human-readable nudge after a malformed JSON envelope. Stdout (the JSON
+ * response) is unchanged; this only writes to stderr, which programmatic
+ * consumers already ignore. Scoped to ipman_request_parse failures — never
+ * fired on op-level errors, where the caller's envelope was well-formed. */
+static void emit_parse_error_tip(void) {
+    fputs("ipman: tip — try `ipman --usage` for CLI verbs, "
+          "or `ipman --next` to see the active plan\n",
+          stderr);
+}
+
 static void print_usage(FILE *out) {
     fprintf(out, "ipman %s - Implementation Plan Manager\n", IPMAN_VERSION);
     fputs(
@@ -1850,6 +1860,7 @@ int main(int argc, char **argv) {
         cJSON *resp = ipman_response_err(parsed_id, perr_code, perr_msg, NULL);
         emit_response(resp);
         if (resp) cJSON_Delete(resp);
+        emit_parse_error_tip();
         free(parsed_id);
         ipman_db_close(db);
         return ipman_error_is_fatal(perr_code) ? 1 : 0;
