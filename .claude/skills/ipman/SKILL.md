@@ -68,7 +68,51 @@ JSON request schemas document allowed params, primitive types/enums, required sc
 
 **Read the schema file for the operation you need — don't guess params.**
 
-## 5. Workflow Examples
+## 5. CLI shortcuts (v2.1+ ergonomics)
+
+For routine reads and a curated set of writes, prefer the human-CLI veneer over hand-crafted JSON envelopes. Every veneer command is a thin client over the same op an agent would send, so semantics are identical — you just save the envelope boilerplate.
+
+### Read shortcuts
+
+```sh
+ipman -S                         # active plan, current phase, current task, pending count
+ipman -L                         # pending tasks for the active plan
+ipman -SH <selector>             # detail for a task or phase
+ipman -LG [--summary-only] [--limit N]
+                                 # recent events. v2.2: --summary-only drops Details column;
+                                 # --limit N (1-500, default 20) caps rows (clamped if out of range).
+ipman -N                         # active plan + cursor + standing instructions + Up next pending
+ipman -R <plan>                  # render plan as Markdown
+```
+
+`ipman -N` is the **handoff super-shortcut**: a single call replaces the typical sequence `workspace.context_get` → `plan.get` → `phase.get` → `task.get` → `instruction.list` (×3 scopes). Use it whenever you would have started a session with five separate envelopes.
+
+### Write shortcuts
+
+```sh
+ipman --start  <selector>
+ipman --close  <selector> --summary <text> --comment <text>
+                          [--lessons <text>] [--open-items <text>] [--followup]
+                          [--validation <cmd:status>]... [--decision <text>]...
+ipman --cancel <selector> --summary <text> --comment <text>
+ipman --defer  <selector> --reason-text <text> [--reason-code <code>]
+ipman --close-phase  <selector> --summary <text> --comment <text>      # v2.2
+ipman --cancel-phase <selector> --summary <text> --comment <text>      # v2.2
+ipman --current  <selector>      # set current task or phase (auto-detected)
+ipman --activate <selector>      # set the active plan
+ipman --dry-run                  # combine with any write verb to print the JSON
+                                 # that would be sent and exit without touching the DB
+```
+
+`--dry-run` is the agent-friendliest way to confirm a write before committing it.
+
+### When to drop back to JSON
+
+Use the JSON envelope (sections 2–4) when you need an op with no veneer (most lookups, `plan.export`, `closure.get`, instruction CRUD), when scripting batches, or when you need the full structured response. Selector forms (`id`, `uid`, or `label`) work the same in both surfaces.
+
+If you need the full menu, run `ipman --usage`. Parse-level envelope errors also nudge you toward `ipman --usage` or `ipman --next`.
+
+## 6. Workflow Examples
 
 ### Task Lifecycle
 
@@ -164,7 +208,7 @@ Use instructions for standing constraints and operating guidance. Use comments f
 
 For operations not covered here, see `.ipman/operations/ipman.op.*.schema.md` for the full param list.
 
-## 6. Error Codes
+## 7. Error Codes
 
 | Code | Meaning | Retryable? | Action |
 |---|---|---|---|
@@ -180,7 +224,7 @@ Every error — fatal or semantic — emits a JSON envelope on stdout. The exit 
 - `invalid_request` and `internal_error` cause **exit code 1**: the request could not be executed (malformed JSON, unreachable DB, etc.). Stdout still receives a best-effort error envelope so the caller can surface the code; do not retry without fixing the cause.
 - All other codes cause **exit code 0**: the operation ran but reported a semantic outcome via `ok:false` (validation, not found, conflict, …). Read `error.code` and `error.message` to decide next steps.
 
-## 7. Agent Handoff
+## 8. Agent Handoff
 
 At session start, recover scope and context:
 
