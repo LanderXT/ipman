@@ -3052,11 +3052,20 @@ static int insert_task_closure_record(sqlite3 *db,
         "INSERT INTO closure_records("
         "entity_type, entity_id, closure_status, resolution, outcome_summary, "
         "closing_comment, lessons_learned, open_items_summary, "
-        "followup_needed, author, event_id"
-        ") VALUES ('task', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
+        "followup_needed, author, event_id, "
+        "commit_sha, dirty, files_changed_json"
+        ") VALUES ('task', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
+    char *files_changed_json = NULL;
+    if (close_data->files_changed != NULL) {
+        files_changed_json = cJSON_PrintUnformatted(close_data->files_changed);
+        if (files_changed_json == NULL) return -1;
+    }
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
-    if (rc != SQLITE_OK) return -1;
+    if (rc != SQLITE_OK) {
+        if (files_changed_json != NULL) cJSON_free(files_changed_json);
+        return -1;
+    }
     sqlite3_bind_int64(stmt, 1, task_id);
     sqlite3_bind_text(stmt, 2, closure_status, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 3, resolution, -1, SQLITE_TRANSIENT);
@@ -3067,8 +3076,16 @@ static int insert_task_closure_record(sqlite3 *db,
     sqlite3_bind_int(stmt, 8, close_data->followup_needed);
     sqlite3_bind_text(stmt, 9, actor, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 10, event_id);
+    bind_optional_text(stmt, 11, close_data->commit_sha);
+    if (close_data->dirty_set) {
+        sqlite3_bind_int(stmt, 12, close_data->dirty);
+    } else {
+        sqlite3_bind_null(stmt, 12);
+    }
+    bind_optional_text(stmt, 13, files_changed_json);
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
+    if (files_changed_json != NULL) cJSON_free(files_changed_json);
     return rc == SQLITE_DONE ? 0 : -1;
 }
 
