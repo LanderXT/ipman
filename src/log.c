@@ -10,10 +10,9 @@
 #include <string.h>
 
 typedef enum {
-    LEVEL_DEBUG = 0,
-    LEVEL_INFO  = 1,
-    LEVEL_WARN  = 2,
-    LEVEL_ERROR = 3,
+    LEVEL_INFO,
+    LEVEL_WARN,
+    LEVEL_ERROR,
 } ipman_log_level_t;
 
 static ipman_log_level_t g_min_level = LEVEL_WARN;
@@ -22,8 +21,7 @@ void ipman_log_init(void) {
     g_min_level = LEVEL_WARN;
     const char *v = getenv("IPMAN_LOG");
     if (v == NULL || *v == '\0') return;
-    if      (strcmp(v, "debug") == 0) g_min_level = LEVEL_DEBUG;
-    else if (strcmp(v, "info")  == 0) g_min_level = LEVEL_INFO;
+    if      (strcmp(v, "info")  == 0) g_min_level = LEVEL_INFO;
     else if (strcmp(v, "warn")  == 0) g_min_level = LEVEL_WARN;
     else if (strcmp(v, "error") == 0) g_min_level = LEVEL_ERROR;
     /* Unknown values: keep default WARN (already reset above). */
