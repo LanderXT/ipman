@@ -1701,6 +1701,8 @@ static int run_log(void) {
 }
 
 int main(int argc, char **argv) {
+    ipman_log_init();
+
     /* Strip --dry-run from argv before dispatch so it is position-independent
      * and the per-verb arg parsers do not see it as an unknown flag. The
      * write verbs below check g_dry_run just before their dispatch call. */
