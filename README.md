@@ -12,17 +12,17 @@ Single C binary · SQLCipher-encrypted SQLite · JSON-on-stdin protocol · Linux
 
 ---
 
-`ipman` is an implementation-plan database with two surfaces: a **JSON request/response protocol** for AI agents (Claude Code, Codex, your own) and a **terse human CLI** for the operator (`ipman -S` / `ipman -N` for inspection, plus write verbs like `ipman --start` and `ipman --close` for routine supervision). Plans live in an encrypted SQLite file inside the project (`./.ipman/ipman.db`), so context survives between agent sessions, between agents, and between you and the agent.
+`ipman` is an implementation-plan database with two surfaces: a **terse human CLI** for the operator (`ipman -S` / `ipman -N` for inspection, plus write verbs like `ipman --start` and `ipman --close` for routine supervision) and a **JSON request/response protocol** for AI agents (Claude Code, Codex, your own). Plans live in an encrypted SQLite file inside the project (`./.ipman/ipman.db`), so context survives between agent sessions, between agents, and between you and the agent.
 
 It is the missing piece for agents that already write good code but forget what they are doing the moment the conversation compacts.
 
 ## Table of contents
 
 - [Why ipman?](#why-ipman)
-- [Quickstart](#quickstart)
+- [Five-minute tour](#five-minute-tour)
 - [Two surfaces, one database](#two-surfaces-one-database)
 - [Concepts](#concepts)
-- [How agents discover the API](#how-agents-discover-the-api)
+- [Programmatic surface](#programmatic-surface)
 - [MCP server (optional)](#mcp-server-optional)
 - [Security](#security)
 - [Human CLI reference](#human-cli-reference)
@@ -48,7 +48,7 @@ Modern coding agents are good at executing one task; they are bad at remembering
 
 If you have ever asked an agent "what was the plan again?" three turns in a row, this is the shape of the fix.
 
-## Quickstart
+## Five-minute tour
 
 ### 1. Install
 
@@ -73,39 +73,35 @@ ipman -U                         # show usage
 `ipman` operates per-project. From your project root:
 
 ```sh
-ipman init
+ipman --init
 ```
 
 That creates `./.ipman/` (mode `0700`) with the encrypted database, the per-project key salt, and a generated `START-HERE.md` for any agent that opens the directory.
 
-### 3. Create a plan
+### 3. Drive the loop with CLI verbs
 
-Either as a human:
-
-```sh
-ipman --status                   # nothing yet — no active plan
-```
-
-…or as an agent (the actual primary use case), via JSON on stdin:
+Plan and task creation are agent-driven (see [Programmatic surface](#programmatic-surface)) — the CLI does not expose `plan.create` or `task.create`. Once your agent has populated a plan, supervise it from the shell:
 
 ```sh
-echo '{"protocol_version":2,"request_id":"r1","actor":"agent",
-       "op":"plan.create",
-       "params":{"title":"Ship login refactor",
-                 "summary":"Split auth from session handling",
-                 "priority":"high"}}' | ipman
+ipman -N                         # session entry-point: active plan, cursor,
+                                 # standing instructions, and "Up next" tasks
+
+ipman --activate ship-login      # switch the active plan
+                                 # (selectors: id, uid, label, or code)
+
+ipman --start move-jwt-verification-into-middleware
+                                 # mark the task in_progress
+
+ipman --close move-jwt-verification-into-middleware \
+  --summary "Centralized JWT decode in mw_auth.c" \
+  --comment "Caller updated the cache key; see PR #214" \
+  --validation "make test:passed" \
+  --decision "Defer the rename to a follow-up — out of scope here"
+                                 # close with closure record;
+                                 # auto-captures commit_sha, dirty, files_changed
 ```
 
-Response:
-
-```json
-{"request_id":"r1","ok":true,"result":{"plan":{
-  "id":1,"label":"ship-login-refactor",
-  "title":"Ship login refactor","status":"open","priority":"high",
-  "created_at":"2026-04-30T12:33:11.373Z", ...}}}
-```
-
-After a few more `plan.activate`, `phase.create`, and `task.create` calls, the human view becomes:
+Inspection-only flow looks like:
 
 ```
 $ ipman -S
@@ -130,7 +126,7 @@ $ ipman -L
 └───────────────────────────────────────────┴──────────┴────────┴────────────────────────────────┘
 ```
 
-That is the full feedback loop: the agent edits the plan, you read it, you push back, the agent picks up the changes.
+That is the full feedback loop: the agent edits the plan, you read it with `-N`, you push back, the agent picks up the changes. For the complete CLI surface, run `ipman --usage` or see [Human CLI reference](#human-cli-reference).
 
 ## Two surfaces, one database
 
@@ -192,9 +188,32 @@ Re-opened entities preserve their previous closure record, so an agent that resu
 
 Use `instruction.add` for durable guidance ("never modify migrations after merge", "this plan must preserve backward compatibility"). Use `comment.add` for conversational notes and decisions in flight. The two are deliberately distinct surfaces: agents reading at session start are pointed at instructions first.
 
-## How agents discover the API
+## Programmatic surface
 
-`ipman init` (and the periodic `workspace.refresh_agent_docs`) writes auto-generated documentation into `.ipman/`:
+Agents drive the heavy lifting — creating plans, decomposing into phases, threading comments — by sending one JSON request on stdin and reading one JSON response on stdout:
+
+```sh
+echo '{"protocol_version":2,"request_id":"r1","actor":"agent",
+       "op":"plan.create",
+       "params":{"title":"Ship login refactor",
+                 "summary":"Split auth from session handling",
+                 "priority":"high"}}' | ipman
+```
+
+Response:
+
+```json
+{"request_id":"r1","ok":true,"result":{"plan":{
+  "id":1,"label":"ship-login-refactor",
+  "title":"Ship login refactor","status":"open","priority":"high",
+  "created_at":"2026-04-30T12:33:11.373Z", ...}}}
+```
+
+Use `ipman --b64` when shell escaping is awkward — stdin and stdout become base64-encoded JSON. The full operation surface (64 ops across nine entities) is enumerated under [Operations reference](#operations-reference).
+
+### How agents discover the API
+
+`ipman --init` (and the periodic `workspace.refresh_agent_docs`) writes auto-generated documentation into `.ipman/`:
 
 ```
 .ipman/
