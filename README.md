@@ -12,7 +12,7 @@ Single C binary · SQLCipher-encrypted SQLite · JSON-on-stdin protocol · Linux
 
 ---
 
-`ipman` is an implementation-plan database with two surfaces: a **JSON request/response protocol** for AI agents (Claude Code, Codex, your own) and a **terse human CLI** (`ipman -S`, `ipman -L`, `ipman --render`) for the operator. Plans live in an encrypted SQLite file inside the project (`./.ipman/ipman.db`), so context survives between agent sessions, between agents, and between you and the agent.
+`ipman` is an implementation-plan database with two surfaces: a **JSON request/response protocol** for AI agents (Claude Code, Codex, your own) and a **terse human CLI** for the operator (`ipman -S` / `ipman -N` for inspection, plus write verbs like `ipman --start` and `ipman --close` for routine supervision). Plans live in an encrypted SQLite file inside the project (`./.ipman/ipman.db`), so context survives between agent sessions, between agents, and between you and the agent.
 
 It is the missing piece for agents that already write good code but forget what they are doing the moment the conversation compacts.
 
@@ -140,11 +140,11 @@ The same data is reachable two ways. Pick the surface by who is calling.
 |---|---|---|
 | Invocation | `… \| ipman` (JSON envelope on stdin) | `ipman <subcommand>` |
 | Output | JSON on stdout, exit code via [error semantics](#error-semantics) | Box-drawn tables on stdout, errors on stderr |
-| Operations | All 61 operations (`plan.create`, `task.transition`, `closure.get`, …) | Read-only views: `status`, `ls`, `show`, `log`, `render` |
-| Mutations | Yes | No — humans steer agents, not the database |
-| Use case | Agent-driven planning, transitions, comments | Inspection, review, supervision |
+| Operations | All 64 operations (`plan.create`, `task.transition`, `closure.get`, …) | Read-only views (`status`, `ls`, `show`, `log`, `next`, `render`) plus a curated set of write verbs (`start`, `close`, `cancel`, `defer`, `current`, `activate`) |
+| Mutations | Yes — full surface | Yes — but only via the curated verbs above; each one is a thin wrapper over the same JSON op an agent would send |
+| Use case | Agent-driven planning, transitions, comments | Inspection, review, supervision, routine task transitions |
 
-The agent does the writes; the human watches.
+The agent drives the heavy lifting (creating plans, decomposing into phases, threading comments). The human surface is enough to step in for routine transitions when supervising directly — start a task, close it with a summary, defer one with a reason — without ever leaving the shell or hand-rolling JSON.
 
 ## Concepts
 
@@ -253,31 +253,99 @@ This is *defense at rest*, not a sandbox. Anyone who can run `ipman` as your use
 
 ## Human CLI reference
 
+Selectors accept a numeric `id`, a `uid` (e.g. `task_42`), or a `label` (resolved against the active plan). Every form is interchangeable with its bare-word and short-flag equivalents: `ipman -S` ≡ `ipman status` ≡ `ipman --status`.
+
+### Read-only
+
 ```
-ipman -I  / --init                  Initialize workspace
 ipman -S  / --status                Active plan, current phase, current task, pending count
 ipman -L  / --ls                    List pending tasks for the active plan
-ipman -SH / --show <selector>       Detail for a task or phase (id, or label scoped to active plan)
+ipman -SH / --show <selector>       Detail for a task or phase
 ipman -LG / --log                   Recent workspace events
-ipman -R  / --render <plan>         Render plan as Markdown (id, code, or label)
-ipman -U  / --usage                 Show full help
-
-Maintenance:
-  --migrate-encrypt                 Convert a plaintext ipman.db to encrypted
-  export --plaintext --i-understand <out.db>
-                                    Emergency dump to plaintext SQLite
-  sql "SQL..."                      Ad-hoc SQL escape hatch (developer only)
-
-Agent protocol:
-  ipman < request.json              JSON request/response on stdin/stdout
-  -B / --b64 < request.b64          Same, with base64-encoded JSON input
+ipman -N  / --next                  Active plan, cursor, instructions, and "Up next" pending tasks
+ipman -R  / --render <plan>         Render plan as Markdown
 ```
 
-Each form is interchangeable: `ipman -S` ≡ `ipman status` ≡ `ipman --status`.
+`ipman -N` is the session entry-point: one call replaces the typical `workspace.context_get` + `plan.get` + `phase.get` + `task.get` + `instruction.list` (×3 scopes) + `task.list` sequence.
+
+### Write
+
+```
+ipman --start    <selector>                                  Mark a task in_progress
+ipman --close    <selector> --summary <text> --comment <text>
+                            [--lessons <text>] [--open-items <text>] [--followup]
+                            [--validation <cmd:status>]... [--decision <text>]...
+                            Close a task with closure record (auto-captures git state
+                            when run inside a repo: commit_sha, dirty, files_changed)
+ipman --cancel   <selector> --summary <text> --comment <text>
+                            Cancel a task with closure record
+ipman --defer    <selector> --reason-text <text> [--reason-code <code>]
+                            Defer a task with reason
+ipman --dry-run             Combine with any write verb to print the JSON envelope
+                            that would be sent and exit without touching the DB
+```
+
+Every write verb is a thin client over the same JSON op an agent would send. `--validation` and `--decision` are repeatable and surface as structured evidence in the closure record (rendered in `closure.get` and the plan markdown).
+
+### Context
+
+```
+ipman --current  <selector>         Set current task or phase (auto-detected)
+ipman --activate <selector>         Set the active plan for the workspace
+```
+
+### Setup
+
+```
+ipman -I  / --init                  Initialize workspace (creates ./.ipman/)
+ipman -U  / --usage                 Show full help
+```
+
+### Agent protocol
+
+```
+ipman < request.json                JSON request/response on stdin/stdout
+ipman -B / --b64 < request.b64      Same, with base64-encoded JSON input
+```
+
+### Maintenance
+
+```
+ipman --migrate-encrypt             Convert a plaintext ipman.db to encrypted in-place
+ipman export --plaintext --i-understand <out.db>
+                                    Emergency dump to plaintext SQLite
+ipman sql "SQL..."                  Ad-hoc SQL escape hatch (developer / test only)
+```
+
+### Examples
+
+Start a task, close it with structured evidence, defer another, all without leaving the shell:
+
+```sh
+ipman --start review-pr-42
+
+ipman --close review-pr-42 \
+  --summary "Approved with two small tweaks" \
+  --comment "Caller updated the cache key; LGTM" \
+  --validation "make test:passed" \
+  --validation "shellcheck scripts/:passed" \
+  --decision "Defer the rename to a follow-up — out of scope here"
+
+ipman --defer migrate-redis-cluster \
+  --reason-text "Blocked on infra ticket INFRA-2031" \
+  --reason-code external_dependency
+```
+
+Preview the JSON envelope without committing:
+
+```sh
+ipman --close review-pr-42 \
+  --summary "..." --comment "..." --dry-run
+```
 
 ## Operations reference
 
-The runtime exposes 61 operations across nine entities. The full, always-current list lives at `.ipman/indexes/ipman.index.operations.md` after init; here is the shape:
+The runtime exposes 64 operations across nine entities. The full, always-current list lives at `.ipman/indexes/ipman.index.operations.md` after init; here is the shape:
 
 | Entity | Common verbs |
 |---|---|
