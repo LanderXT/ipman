@@ -892,15 +892,66 @@ static void apply_git_capture(cJSON *p, int no_git,
     if (files != NULL) cJSON_AddItemToObject(p, "files_changed", files);
 }
 
+/*
+ * Parse a "--validation cmd:status" value into a {cmd, status} cJSON object
+ * appended to *arr_inout (creating the array on first call). Returns 0 on
+ * success or -1 with an error message on stderr. The split point is the
+ * LAST colon: cmds may legitimately contain colons (URLs, paths), the
+ * status is always a single trailing word.
+ */
+static int parse_validation_flag(const char *value, cJSON **arr_inout) {
+    const char *colon = strrchr(value, ':');
+    if (colon == NULL || colon == value || colon[1] == '\0') {
+        fprintf(stderr,
+                "ipman close: --validation value must be 'cmd:status'\n");
+        return -1;
+    }
+    size_t cmd_len = (size_t)(colon - value);
+    while (cmd_len > 0 &&
+           (value[cmd_len - 1] == ' ' || value[cmd_len - 1] == '\t')) {
+        cmd_len--;
+    }
+    if (cmd_len == 0) {
+        fprintf(stderr, "ipman close: --validation cmd cannot be empty\n");
+        return -1;
+    }
+    const char *status = colon + 1;
+    while (*status == ' ' || *status == '\t') status++;
+    if (*status == '\0') {
+        fprintf(stderr,
+                "ipman close: --validation status cannot be empty\n");
+        return -1;
+    }
+    char *cmd = strndup(value, cmd_len);
+    if (cmd == NULL) {
+        fprintf(stderr, "ipman close: out of memory parsing --validation\n");
+        return -1;
+    }
+    if (*arr_inout == NULL) {
+        *arr_inout = cJSON_CreateArray();
+        if (*arr_inout == NULL) { free(cmd); return -1; }
+    }
+    cJSON *entry = cJSON_CreateObject();
+    if (entry == NULL) { free(cmd); return -1; }
+    cJSON_AddStringToObject(entry, "cmd", cmd);
+    cJSON_AddStringToObject(entry, "status", status);
+    cJSON_AddItemToArray(*arr_inout, entry);
+    free(cmd);
+    return 0;
+}
+
 /* --close <selector> --summary <text> --comment <text>
  *                   [--lessons <text>] [--open-items <text>] [--followup]
  *                   [--commit <sha>] [--no-git] [--files <a,b,c>]
+ *                   [--validation <cmd:status>]... [--decision <text>]...
  * Resolves a task selector, then dispatches task.close with the closure
  * fields. summary/comment are required (server-side too — validating CLI-side
  * gives a sharper diagnostic). When run inside a git repo, commit_sha, dirty,
  * and files_changed are auto-captured; --commit / --files override and
  * --no-git suppresses entirely. Outside a repo, the auto-capture silently
- * yields no fields. */
+ * yields no fields. --validation and --decision are repeatable; status is any
+ * non-empty string (the "passed"/"failed" convention is documentation, not
+ * enforcement). */
 static int run_close(int argc, char **argv) {
     const char *selector  = NULL;
     const char *summary   = NULL;
@@ -911,6 +962,8 @@ static int run_close(int argc, char **argv) {
     const char *files_override  = NULL;
     int         followup  = 0;
     int         no_git    = 0;
+    cJSON      *validations_arr = NULL;
+    cJSON      *decisions_arr   = NULL;
 
     for (int i = 2; i < argc; ++i) {
         if (strcmp(argv[i], "--summary") == 0) {
@@ -950,17 +1003,52 @@ static int run_close(int argc, char **argv) {
         } else if (strcmp(argv[i], "--files") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "ipman close: --files requires a value\n");
+                if (validations_arr != NULL) cJSON_Delete(validations_arr);
+                if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
                 return 1;
             }
             files_override = argv[++i];
+        } else if (strcmp(argv[i], "--validation") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman close: --validation requires a value\n");
+                if (validations_arr != NULL) cJSON_Delete(validations_arr);
+                if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
+                return 1;
+            }
+            if (parse_validation_flag(argv[++i], &validations_arr) != 0) {
+                if (validations_arr != NULL) cJSON_Delete(validations_arr);
+                if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--decision") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman close: --decision requires a value\n");
+                if (validations_arr != NULL) cJSON_Delete(validations_arr);
+                if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
+                return 1;
+            }
+            const char *d = argv[++i];
+            while (*d == ' ' || *d == '\t') d++;
+            if (*d == '\0') {
+                fprintf(stderr, "ipman close: --decision cannot be empty\n");
+                if (validations_arr != NULL) cJSON_Delete(validations_arr);
+                if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
+                return 1;
+            }
+            if (decisions_arr == NULL) decisions_arr = cJSON_CreateArray();
+            cJSON_AddItemToArray(decisions_arr, cJSON_CreateString(d));
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "ipman close: unknown flag: %s\n", argv[i]);
+            if (validations_arr != NULL) cJSON_Delete(validations_arr);
+            if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
             return 1;
         } else if (selector == NULL) {
             selector = argv[i];
         } else {
             fprintf(stderr, "ipman close: unexpected extra argument: %s\n",
                     argv[i]);
+            if (validations_arr != NULL) cJSON_Delete(validations_arr);
+            if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
             return 1;
         }
     }
@@ -976,7 +1064,10 @@ static int run_close(int argc, char **argv) {
                 "usage: ipman --close <task-uid|label|id> "
                 "--summary <text> --comment <text> "
                 "[--lessons <text>] [--open-items <text>] [--followup] "
-                "[--commit <sha>] [--no-git] [--files <a,b,c>]\n");
+                "[--commit <sha>] [--no-git] [--files <a,b,c>] "
+                "[--validation <cmd:status>]... [--decision <text>]...\n");
+        if (validations_arr != NULL) cJSON_Delete(validations_arr);
+        if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
         return 1;
     }
 
@@ -984,13 +1075,18 @@ static int run_close(int argc, char **argv) {
         fprintf(stderr,
                 "ipman close: --no-git cannot be combined with "
                 "--commit or --files\n");
+        if (validations_arr != NULL) cJSON_Delete(validations_arr);
+        if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
         return 1;
     }
 
     char home[PATH_MAX], dbpath[PATH_MAX];
     sqlite3 *db = NULL;
-    if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0)
+    if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0) {
+        if (validations_arr != NULL) cJSON_Delete(validations_arr);
+        if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
         return 1;
+    }
 
     long id = 0;
     cli_selector_kind_t kind = 0;
@@ -999,6 +1095,8 @@ static int run_close(int argc, char **argv) {
                              &id, &kind, err, sizeof err) != 0) {
         fprintf(stderr, "ipman close: %s\n", err);
         ipman_db_close(db);
+        if (validations_arr != NULL) cJSON_Delete(validations_arr);
+        if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
         return 1;
     }
 
@@ -1010,6 +1108,8 @@ static int run_close(int argc, char **argv) {
     if (open_items != NULL) cJSON_AddStringToObject(p, "open_items_summary", open_items);
     if (followup)           cJSON_AddBoolToObject  (p, "followup_needed",    1);
     apply_git_capture(p, no_git, commit_override, files_override);
+    if (validations_arr != NULL) cJSON_AddItemToObject(p, "validations_run", validations_arr);
+    if (decisions_arr   != NULL) cJSON_AddItemToObject(p, "decisions",       decisions_arr);
     if (g_dry_run) {
         print_dry_run_envelope("task.close", p, "close");
         cJSON_Delete(p);
