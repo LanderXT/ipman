@@ -171,6 +171,13 @@ static void print_usage(FILE *out) {
         "                              Cancel a task with closure record\n"
         "  --defer  <selector> --reason-text <text> [--reason-code <code>]\n"
         "                              Defer a task with reason\n"
+        "  --close-phase  <selector> --summary <text> --comment <text>\n"
+        "                              [--lessons <text>] [--open-items <text>] [--followup]\n"
+        "                              Close a phase with closure record\n"
+        "                              (all child tasks must be terminal)\n"
+        "  --cancel-phase <selector> --summary <text> --comment <text>\n"
+        "                              [--lessons <text>] [--open-items <text>] [--followup]\n"
+        "                              Cancel a phase with closure record\n"
         "  --dry-run                   Combine with any write verb to print the JSON\n"
         "                              envelope that would be sent and exit without\n"
         "                              touching the DB\n"
@@ -206,7 +213,8 @@ static void print_usage(FILE *out) {
         "\n"
         "Default storage: ./.ipman/ipman.db\n"
         "Docs after init: .ipman/START-HERE.md\n"
-        "v2.1 ergonomics:  docs/v2.1-ergonomics.md\n",
+        "v2.1 ergonomics: docs/v2.1-ergonomics.md\n"
+        "v2.2 ergonomics: docs/v2.2-ergonomics.md\n",
         out);
 }
 
@@ -450,6 +458,8 @@ static const char *parse_command(const char *arg) {
     if (strcmp(arg, "start")    == 0 ||                              strcmp(arg, "--start")   == 0) return "start";
     if (strcmp(arg, "close")    == 0 ||                              strcmp(arg, "--close")   == 0) return "close";
     if (strcmp(arg, "cancel")   == 0 ||                              strcmp(arg, "--cancel")  == 0) return "cancel";
+    if (strcmp(arg, "close-phase")  == 0 ||                          strcmp(arg, "--close-phase")  == 0) return "close-phase";
+    if (strcmp(arg, "cancel-phase") == 0 ||                          strcmp(arg, "--cancel-phase") == 0) return "cancel-phase";
     if (strcmp(arg, "defer")    == 0 ||                              strcmp(arg, "--defer")   == 0) return "defer";
     if (strcmp(arg, "current")  == 0 ||                              strcmp(arg, "--current") == 0) return "current";
     if (strcmp(arg, "activate") == 0 ||                              strcmp(arg, "--activate")== 0) return "activate";
@@ -1251,6 +1261,141 @@ static int run_cancel(int argc, char **argv) {
     return 0;
 }
 
+/* --close-phase  <selector> --summary <text> --comment <text>
+ *                          [--lessons <text>] [--open-items <text>] [--followup]
+ * --cancel-phase <selector> --summary <text> --comment <text>
+ *                          [--lessons <text>] [--open-items <text>] [--followup]
+ *
+ * Both verbs serialize to phase.close — the wire op is single-target and
+ * selects between resolutions via its `outcome` field
+ * (completed | canceled). The CLI exposes two named verbs (rather than a
+ * polymorphic --close) so the audit trail in the shell history matches the
+ * resolution recorded in closure memory. phase.close does not accept the
+ * validations_run / decisions / git auto-capture fields that task.close does,
+ * so those flags are intentionally absent here.
+ *
+ * `cancel` is non-NULL ("canceled") for the cancel verb and NULL for close,
+ * which selects the verb name in error messages, dry-run request_id, and
+ * the success line printed to stdout. */
+static int run_close_or_cancel_phase(int argc, char **argv,
+                                     const char *cancel_outcome) {
+    const char *verb = (cancel_outcome != NULL) ? "cancel-phase" : "close-phase";
+    const char *selector  = NULL;
+    const char *summary   = NULL;
+    const char *comment   = NULL;
+    const char *lessons   = NULL;
+    const char *open_items = NULL;
+    int         followup  = 0;
+
+    for (int i = 2; i < argc; ++i) {
+        if (strcmp(argv[i], "--summary") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman %s: --summary requires a value\n", verb);
+                return 1;
+            }
+            summary = argv[++i];
+        } else if (strcmp(argv[i], "--comment") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman %s: --comment requires a value\n", verb);
+                return 1;
+            }
+            comment = argv[++i];
+        } else if (strcmp(argv[i], "--lessons") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman %s: --lessons requires a value\n", verb);
+                return 1;
+            }
+            lessons = argv[++i];
+        } else if (strcmp(argv[i], "--open-items") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman %s: --open-items requires a value\n", verb);
+                return 1;
+            }
+            open_items = argv[++i];
+        } else if (strcmp(argv[i], "--followup") == 0) {
+            followup = 1;
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "ipman %s: unknown flag: %s\n", verb, argv[i]);
+            return 1;
+        } else if (selector == NULL) {
+            selector = argv[i];
+        } else {
+            fprintf(stderr, "ipman %s: unexpected extra argument: %s\n",
+                    verb, argv[i]);
+            return 1;
+        }
+    }
+
+    if (selector == NULL || summary == NULL || comment == NULL) {
+        if (selector == NULL)
+            fprintf(stderr, "ipman %s: <selector> is required\n", verb);
+        if (summary == NULL)
+            fprintf(stderr, "ipman %s: --summary is required\n", verb);
+        if (comment == NULL)
+            fprintf(stderr, "ipman %s: --comment is required\n", verb);
+        fprintf(stderr,
+                "usage: ipman --%s <phase-uid|label|id> "
+                "--summary <text> --comment <text> "
+                "[--lessons <text>] [--open-items <text>] [--followup]\n",
+                verb);
+        return 1;
+    }
+
+    char home[PATH_MAX], dbpath[PATH_MAX];
+    sqlite3 *db = NULL;
+    if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0)
+        return 1;
+
+    long id = 0;
+    cli_selector_kind_t kind = 0;
+    char err[CLI_SELECTOR_ERR_LEN];
+    if (cli_resolve_selector(db, selector, CLI_SELECTOR_KIND_PHASE,
+                             &id, &kind, err, sizeof err) != 0) {
+        fprintf(stderr, "ipman %s: %s\n", verb, err);
+        ipman_db_close(db);
+        return 1;
+    }
+
+    cJSON *p = cJSON_CreateObject();
+    cJSON_AddNumberToObject(p, "id", (double)id);
+    cJSON_AddStringToObject(p, "outcome",
+                            (cancel_outcome != NULL) ? cancel_outcome : "completed");
+    cJSON_AddStringToObject(p, "outcome_summary", summary);
+    cJSON_AddStringToObject(p, "closing_comment", comment);
+    if (lessons    != NULL) cJSON_AddStringToObject(p, "lessons_learned",    lessons);
+    if (open_items != NULL) cJSON_AddStringToObject(p, "open_items_summary", open_items);
+    if (followup)           cJSON_AddBoolToObject  (p, "followup_needed",    1);
+    if (g_dry_run) {
+        print_dry_run_envelope("phase.close", p, verb);
+        cJSON_Delete(p);
+        ipman_db_close(db);
+        return 0;
+    }
+    cJSON *result = call_op(db, "phase.close", p);
+    cJSON_Delete(p);
+    ipman_db_close(db);
+
+    if (result == NULL) return 1;
+
+    const char *past = (cancel_outcome != NULL) ? "canceled" : "closed";
+    cJSON *phase = cJSON_GetObjectItemCaseSensitive(result, "phase");
+    cJSON *title = phase ? cJSON_GetObjectItemCaseSensitive(phase, "title") : NULL;
+    if (title && cJSON_IsString(title))
+        fprintf(stdout, "%s phase %ld: %s\n", past, id, title->valuestring);
+    else
+        fprintf(stdout, "%s phase %ld\n", past, id);
+    cJSON_Delete(result);
+    return 0;
+}
+
+static int run_close_phase(int argc, char **argv) {
+    return run_close_or_cancel_phase(argc, argv, NULL);
+}
+
+static int run_cancel_phase(int argc, char **argv) {
+    return run_close_or_cancel_phase(argc, argv, "canceled");
+}
+
 /* --defer <selector> --reason-text <text> [--reason-code <code>]
  * Resolves a task selector and dispatches task.defer. The human verb
  * requires --reason-text (the protocol allows reason_code alone, but free
@@ -1768,6 +1913,12 @@ int main(int argc, char **argv) {
     }
     if (cmd != NULL && strcmp(cmd, "cancel") == 0) {
         return run_cancel(argc, argv);
+    }
+    if (cmd != NULL && strcmp(cmd, "close-phase") == 0) {
+        return run_close_phase(argc, argv);
+    }
+    if (cmd != NULL && strcmp(cmd, "cancel-phase") == 0) {
+        return run_cancel_phase(argc, argv);
     }
     if (cmd != NULL && strcmp(cmd, "defer") == 0) {
         return run_defer(argc, argv);
