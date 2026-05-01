@@ -121,13 +121,15 @@ static void case_unknown_value(void) {
 }
 
 static void case_debug(void) {
-    g_case = "IPMAN_LOG=debug";
+    g_case = "IPMAN_LOG=debug (legacy, now unknown)";
     setenv("IPMAN_LOG", "debug", 1);
     ipman_log_init();
     char out[4096];
     if (run_log_calls(out, sizeof out) != 0) FAIL("capture failed");
-    /* debug threshold: everything emits. */
-    ASSERT_CONTAINS(out, "level=info");
+    /* "debug" is no longer a recognized level. Like any unknown value
+     * it falls back to default WARN. Regression test against accidentally
+     * re-introducing the legacy alias. */
+    ASSERT_NOT_CONTAINS(out, "level=info");
     ASSERT_CONTAINS(out, "level=warn");
     ASSERT_CONTAINS(out, "level=error");
 }
@@ -169,7 +171,7 @@ static void case_idempotent_reset(void) {
     /* After a high-verbosity init, a subsequent init with no env must
      * reset to the default rather than retain the prior setting. */
     g_case = "idempotent reset to default";
-    setenv("IPMAN_LOG", "debug", 1);
+    setenv("IPMAN_LOG", "info", 1);
     ipman_log_init();
     unsetenv("IPMAN_LOG");
     ipman_log_init();
