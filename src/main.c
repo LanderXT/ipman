@@ -749,18 +749,168 @@ static int run_start(const char *selector) {
     return 0;
 }
 
+/*
+ * Run a shell command via popen and return the first non-empty line of
+ * stdout (newline-trimmed) as a heap string the caller must free, or NULL
+ * if the command emitted nothing or exited non-zero. stderr is the caller's
+ * responsibility — pass `2>/dev/null` in the command string to silence it.
+ */
+static char *git_capture_line(const char *cmd) {
+    FILE *f = popen(cmd, "r");
+    if (f == NULL) return NULL;
+    char buf[256];
+    char *line = NULL;
+    if (fgets(buf, sizeof buf, f) != NULL) {
+        size_t n = strlen(buf);
+        while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+            buf[--n] = 0;
+        if (n > 0) line = strdup(buf);
+    }
+    /* Drain any remaining output so pclose doesn't block on a full pipe. */
+    char drain[256];
+    while (fgets(drain, sizeof drain, f) != NULL) { /* discard */ }
+    int rc = pclose(f);
+    if (rc != 0) {
+        free(line);
+        return NULL;
+    }
+    return line;
+}
+
+/*
+ * Run a shell command and collect each stdout line as a string entry in a
+ * new cJSON array (caller cJSON_Deletes). Returns NULL if popen fails or the
+ * command exits non-zero (e.g. HEAD~1 missing on initial commit).
+ */
+static cJSON *git_capture_lines(const char *cmd) {
+    FILE *f = popen(cmd, "r");
+    if (f == NULL) return NULL;
+    cJSON *arr = cJSON_CreateArray();
+    if (arr == NULL) { pclose(f); return NULL; }
+    char buf[1024];
+    while (fgets(buf, sizeof buf, f) != NULL) {
+        size_t n = strlen(buf);
+        while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+            buf[--n] = 0;
+        if (n > 0) cJSON_AddItemToArray(arr, cJSON_CreateString(buf));
+    }
+    int rc = pclose(f);
+    if (rc != 0) {
+        cJSON_Delete(arr);
+        return NULL;
+    }
+    return arr;
+}
+
+/* Returns 1 if the current working directory is inside a git work tree. */
+static int git_in_repo(void) {
+    FILE *f = popen("git rev-parse --is-inside-work-tree >/dev/null 2>&1",
+                    "r");
+    if (f == NULL) return 0;
+    return pclose(f) == 0 ? 1 : 0;
+}
+
+/*
+ * Inspect the working tree's dirty state. Returns 0 on success and writes
+ * 1/0 into *dirty_out; -1 if the git command failed (caller should treat the
+ * field as unknown / absent).
+ */
+static int git_status_dirty(int *dirty_out) {
+    FILE *f = popen("git status --porcelain 2>/dev/null", "r");
+    if (f == NULL) return -1;
+    char buf[256];
+    int has_changes = 0;
+    while (fgets(buf, sizeof buf, f) != NULL) { has_changes = 1; }
+    if (pclose(f) != 0) return -1;
+    *dirty_out = has_changes;
+    return 0;
+}
+
+/*
+ * Split a comma-separated list of file paths into a cJSON string array.
+ * Trims surrounding whitespace and drops empty entries.
+ */
+static cJSON *split_csv_to_array(const char *csv) {
+    cJSON *arr = cJSON_CreateArray();
+    if (arr == NULL) return NULL;
+    char *dup = strdup(csv);
+    if (dup == NULL) return arr;
+    char *save = NULL;
+    for (char *tok = strtok_r(dup, ",", &save); tok != NULL;
+         tok = strtok_r(NULL, ",", &save)) {
+        while (*tok == ' ' || *tok == '\t') tok++;
+        char *end = tok + strlen(tok);
+        while (end > tok && (end[-1] == ' ' || end[-1] == '\t')) --end;
+        *end = 0;
+        if (*tok) cJSON_AddItemToArray(arr, cJSON_CreateString(tok));
+    }
+    free(dup);
+    return arr;
+}
+
+/*
+ * Populate p with optional commit_sha / dirty / files_changed fields.
+ *
+ *  - --no-git suppresses every auto-capture and override (no git fields sent).
+ *  - --commit / --files always win over auto-capture; they work even outside
+ *    a repo so the user can attribute a closure manually.
+ *  - When inside a repo and a field has no override, ipman shells out to git
+ *    rev-parse / git status / git diff. Failure of any individual command is
+ *    silent: the field stays absent so the consumer can distinguish "no git
+ *    context" from "clean repo".
+ */
+static void apply_git_capture(cJSON *p, int no_git,
+                              const char *commit_override,
+                              const char *files_override) {
+    if (no_git) return;
+    int in_repo = git_in_repo();
+
+    char *sha = NULL;
+    if (commit_override != NULL) {
+        sha = strdup(commit_override);
+    } else if (in_repo) {
+        sha = git_capture_line("git rev-parse HEAD 2>/dev/null");
+    }
+    if (sha != NULL) {
+        cJSON_AddStringToObject(p, "commit_sha", sha);
+        free(sha);
+    }
+
+    if (in_repo) {
+        int dirty = 0;
+        if (git_status_dirty(&dirty) == 0) {
+            cJSON_AddBoolToObject(p, "dirty", dirty);
+        }
+    }
+
+    cJSON *files = NULL;
+    if (files_override != NULL) {
+        files = split_csv_to_array(files_override);
+    } else if (in_repo) {
+        files = git_capture_lines("git diff --name-only HEAD~1 2>/dev/null");
+    }
+    if (files != NULL) cJSON_AddItemToObject(p, "files_changed", files);
+}
+
 /* --close <selector> --summary <text> --comment <text>
  *                   [--lessons <text>] [--open-items <text>] [--followup]
+ *                   [--commit <sha>] [--no-git] [--files <a,b,c>]
  * Resolves a task selector, then dispatches task.close with the closure
  * fields. summary/comment are required (server-side too — validating CLI-side
- * gives a sharper diagnostic). */
+ * gives a sharper diagnostic). When run inside a git repo, commit_sha, dirty,
+ * and files_changed are auto-captured; --commit / --files override and
+ * --no-git suppresses entirely. Outside a repo, the auto-capture silently
+ * yields no fields. */
 static int run_close(int argc, char **argv) {
     const char *selector  = NULL;
     const char *summary   = NULL;
     const char *comment   = NULL;
     const char *lessons   = NULL;
     const char *open_items = NULL;
+    const char *commit_override = NULL;
+    const char *files_override  = NULL;
     int         followup  = 0;
+    int         no_git    = 0;
 
     for (int i = 2; i < argc; ++i) {
         if (strcmp(argv[i], "--summary") == 0) {
@@ -789,6 +939,20 @@ static int run_close(int argc, char **argv) {
             open_items = argv[++i];
         } else if (strcmp(argv[i], "--followup") == 0) {
             followup = 1;
+        } else if (strcmp(argv[i], "--commit") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman close: --commit requires a value\n");
+                return 1;
+            }
+            commit_override = argv[++i];
+        } else if (strcmp(argv[i], "--no-git") == 0) {
+            no_git = 1;
+        } else if (strcmp(argv[i], "--files") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman close: --files requires a value\n");
+                return 1;
+            }
+            files_override = argv[++i];
         } else if (argv[i][0] == '-') {
             fprintf(stderr, "ipman close: unknown flag: %s\n", argv[i]);
             return 1;
@@ -811,7 +975,15 @@ static int run_close(int argc, char **argv) {
         fprintf(stderr,
                 "usage: ipman --close <task-uid|label|id> "
                 "--summary <text> --comment <text> "
-                "[--lessons <text>] [--open-items <text>] [--followup]\n");
+                "[--lessons <text>] [--open-items <text>] [--followup] "
+                "[--commit <sha>] [--no-git] [--files <a,b,c>]\n");
+        return 1;
+    }
+
+    if (no_git && (commit_override != NULL || files_override != NULL)) {
+        fprintf(stderr,
+                "ipman close: --no-git cannot be combined with "
+                "--commit or --files\n");
         return 1;
     }
 
@@ -837,6 +1009,7 @@ static int run_close(int argc, char **argv) {
     if (lessons    != NULL) cJSON_AddStringToObject(p, "lessons_learned",    lessons);
     if (open_items != NULL) cJSON_AddStringToObject(p, "open_items_summary", open_items);
     if (followup)           cJSON_AddBoolToObject  (p, "followup_needed",    1);
+    apply_git_capture(p, no_git, commit_override, files_override);
     if (g_dry_run) {
         print_dry_run_envelope("task.close", p, "close");
         cJSON_Delete(p);
