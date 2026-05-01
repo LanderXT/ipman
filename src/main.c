@@ -1013,24 +1013,32 @@ static int run_close(int argc, char **argv) {
         if (strcmp(argv[i], "--summary") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "ipman close: --summary requires a value\n");
+                if (validations_arr != NULL) cJSON_Delete(validations_arr);
+                if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
                 return 1;
             }
             summary = argv[++i];
         } else if (strcmp(argv[i], "--comment") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "ipman close: --comment requires a value\n");
+                if (validations_arr != NULL) cJSON_Delete(validations_arr);
+                if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
                 return 1;
             }
             comment = argv[++i];
         } else if (strcmp(argv[i], "--lessons") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "ipman close: --lessons requires a value\n");
+                if (validations_arr != NULL) cJSON_Delete(validations_arr);
+                if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
                 return 1;
             }
             lessons = argv[++i];
         } else if (strcmp(argv[i], "--open-items") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "ipman close: --open-items requires a value\n");
+                if (validations_arr != NULL) cJSON_Delete(validations_arr);
+                if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
                 return 1;
             }
             open_items = argv[++i];
@@ -1039,6 +1047,8 @@ static int run_close(int argc, char **argv) {
         } else if (strcmp(argv[i], "--commit") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "ipman close: --commit requires a value\n");
+                if (validations_arr != NULL) cJSON_Delete(validations_arr);
+                if (decisions_arr   != NULL) cJSON_Delete(decisions_arr);
                 return 1;
             }
             commit_override = argv[++i];
