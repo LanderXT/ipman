@@ -152,7 +152,10 @@ static void print_usage(FILE *out) {
         "  --start  <selector>         Mark a task in_progress\n"
         "  --close  <selector> --summary <text> --comment <text>\n"
         "                              [--lessons <text>] [--open-items <text>] [--followup]\n"
+        "                              [--validation <cmd:status>]... [--decision <text>]...\n"
+        "                              [--commit <sha>] [--no-git] [--files <a,b,c>]\n"
         "                              Close a task with closure record\n"
+        "                              (auto-captures git state when run inside a repo)\n"
         "  --cancel <selector> --summary <text> --comment <text>\n"
         "                              Cancel a task with closure record\n"
         "  --defer  <selector> --reason-text <text> [--reason-code <code>]\n"
@@ -180,8 +183,18 @@ static void print_usage(FILE *out) {
         "                              of the encrypted DB to <out.db>\n"
         "  sql \"SQL...\"                Run ad-hoc SQL (developer / test escape-hatch)\n"
         "\n"
+        "Examples:\n"
+        "  ipman --activate ship-login-refactor    Set the active plan\n"
+        "  ipman --next                            Inspect plan, cursor, instructions, queue\n"
+        "  ipman --start fix-jwt                   Mark a task in_progress\n"
+        "  ipman --close fix-jwt --summary \"Done\" --comment \"LGTM\" \\\n"
+        "                                --validation \"make test:passed\"\n"
+        "  ipman --close fix-jwt ... --dry-run     Preview the JSON envelope, no DB write\n"
+        "  ipman --defer fix-jwt --reason-text \"Blocked on infra ticket\"\n"
+        "\n"
         "Default storage: ./.ipman/ipman.db\n"
-        "Docs after init: .ipman/START-HERE.md\n",
+        "Docs after init: .ipman/START-HERE.md\n"
+        "v2.1 ergonomics:  docs/v2.1-ergonomics.md\n",
         out);
 }
 
