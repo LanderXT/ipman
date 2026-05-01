@@ -245,6 +245,7 @@ static int artifact_add(ArtifactList *list, const char *rel_path, char *content)
         size_t next_cap = list->cap == 0 ? 64 : list->cap * 2;
         GeneratedArtifact *next = realloc(list->items, next_cap * sizeof next[0]);
         if (next == NULL) {
+            free(content);
             return -1;
         }
         list->items = next;
