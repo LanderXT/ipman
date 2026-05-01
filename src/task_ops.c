@@ -637,7 +637,7 @@ static int read_optional_task_type(cJSON *params, const char **out,
     if (!cJSON_IsString(item) || item->valuestring == NULL ||
         !is_task_type(item->valuestring)) {
         *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-        *err_msg_out = "task_type must be a valid task type";
+        *err_msg_out = "task_type must be one of task, research, bug, decision, review, documentation";
         return -1;
     }
     *out = item->valuestring;
@@ -655,7 +655,7 @@ static int read_optional_origin_type(cJSON *params, const char **out,
     if (!cJSON_IsString(item) || item->valuestring == NULL ||
         !is_origin_type(item->valuestring)) {
         *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-        *err_msg_out = "origin_type must be a valid origin type";
+        *err_msg_out = "origin_type must be one of planned, addendum, discovered, replacement, carryover, external_request";
         return -1;
     }
     *out = item->valuestring;
@@ -2625,7 +2625,7 @@ int ipman_op_task_set_type(const ipman_request_t *req, sqlite3 *db,
     }
     if (!is_task_type(task_type)) {
         *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-        *err_msg_out = "task_type must be a valid task type";
+        *err_msg_out = "task_type must be one of task, research, bug, decision, review, documentation";
         return -1;
     }
     return change_task_with_old(db, req, task_id, "task type changed",
@@ -2715,7 +2715,7 @@ int ipman_op_task_set_origin(const ipman_request_t *req, sqlite3 *db,
     if (origin_task_id == 0) origin_task_present = 0;
     if (!is_origin_type(origin_type)) {
         *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-        *err_msg_out = "origin_type must be a valid origin type";
+        *err_msg_out = "origin_type must be one of planned, addendum, discovered, replacement, carryover, external_request";
         return -1;
     }
     if (ipman_db_begin_immediate(db) != 0) {
