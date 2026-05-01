@@ -255,6 +255,8 @@ This is *defense at rest*, not a sandbox. Anyone who can run `ipman` as your use
 
 Selectors accept a numeric `id`, a `uid` (e.g. `task_42`), or a `label` (resolved against the active plan). Every form is interchangeable with its bare-word and short-flag equivalents: `ipman -S` ≡ `ipman status` ≡ `ipman --status`.
 
+For the design rationale, the no-goals, and migration patterns from hand-rolled v2.0 JSON, see [`docs/v2.1-ergonomics.md`](docs/v2.1-ergonomics.md).
+
 ### Read-only
 
 ```
