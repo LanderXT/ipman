@@ -46,6 +46,23 @@ typedef struct {
     const char *lessons_learned;
     const char *open_items_summary;
     int followup_needed;
+    /*
+     * Git auto-capture fields (Phase 11). All optional; populated by the CLI
+     * when --close runs inside a git repo, or by any client that chooses to
+     * send them. The op handler does not invoke git itself; these fields are
+     * borrowed pointers into the cJSON request tree.
+     *
+     *  - commit_sha:      string (or NULL when absent).
+     *  - dirty/dirty_set: tri-state — dirty_set=0 means absent (column NULL);
+     *                    dirty_set=1 with dirty=0 means clean repo;
+     *                    dirty_set=1 with dirty=1 means dirty repo.
+     *  - files_changed:   cJSON array of strings (or NULL when absent);
+     *                    serialized at INSERT time.
+     */
+    const char *commit_sha;
+    int dirty;
+    int dirty_set;
+    const cJSON *files_changed;
 } task_close_t;
 
 typedef struct {
@@ -702,21 +719,51 @@ static int read_task_close(cJSON *params, task_close_t *close_data,
                              err_code_out, err_msg_out) != 0 ||
         read_optional_string(params, "open_items_summary",
                              &close_data->open_items_summary,
+                             err_code_out, err_msg_out) != 0 ||
+        read_optional_string(params, "commit_sha",
+                             &close_data->commit_sha,
                              err_code_out, err_msg_out) != 0) {
         return -1;
     }
 
     cJSON *followup = cJSON_GetObjectItemCaseSensitive(params, "followup_needed");
-    if (followup == NULL || cJSON_IsNull(followup)) {
-        close_data->followup_needed = 0;
-        return 0;
+    if (followup != NULL && !cJSON_IsNull(followup)) {
+        if (!cJSON_IsBool(followup)) {
+            *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+            *err_msg_out = "followup_needed must be a boolean";
+            return -1;
+        }
+        close_data->followup_needed = cJSON_IsTrue(followup) ? 1 : 0;
     }
-    if (!cJSON_IsBool(followup)) {
-        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-        *err_msg_out = "followup_needed must be a boolean";
-        return -1;
+
+    cJSON *dirty = cJSON_GetObjectItemCaseSensitive(params, "dirty");
+    if (dirty != NULL && !cJSON_IsNull(dirty)) {
+        if (!cJSON_IsBool(dirty)) {
+            *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+            *err_msg_out = "dirty must be a boolean";
+            return -1;
+        }
+        close_data->dirty = cJSON_IsTrue(dirty) ? 1 : 0;
+        close_data->dirty_set = 1;
     }
-    close_data->followup_needed = cJSON_IsTrue(followup) ? 1 : 0;
+
+    cJSON *files = cJSON_GetObjectItemCaseSensitive(params, "files_changed");
+    if (files != NULL && !cJSON_IsNull(files)) {
+        if (!cJSON_IsArray(files)) {
+            *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+            *err_msg_out = "files_changed must be an array of strings or null";
+            return -1;
+        }
+        cJSON *entry = NULL;
+        cJSON_ArrayForEach(entry, files) {
+            if (!cJSON_IsString(entry) || entry->valuestring == NULL) {
+                *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+                *err_msg_out = "files_changed must be an array of strings or null";
+                return -1;
+            }
+        }
+        close_data->files_changed = files;
+    }
     return 0;
 }
 
