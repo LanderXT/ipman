@@ -164,6 +164,12 @@ static cJSON *event_row_to_json(sqlite3_stmt *stmt) {
 }
 
 static cJSON *closure_row_to_json(sqlite3_stmt *stmt) {
+    /* Column shape mirrors closure_from_row() in comment_ops.c so that a
+     * closure read via closure.get and the same closure read via plan.export
+     * have identical field sets and types. The v2.1 evidence columns
+     * (commit_sha, dirty, files_changed, validations_run, decisions) live on
+     * closure_records via migrations 0002 and 0003 and must round-trip
+     * through the export — this is the durable audit-trail surface. */
     cJSON *c = cJSON_CreateObject();
     if (c == NULL) return NULL;
     cJSON_AddNumberToObject(c, "id",          (double)sqlite3_column_int64(stmt, 0));
@@ -175,11 +181,22 @@ static cJSON *closure_row_to_json(sqlite3_stmt *stmt) {
     ipman_json_add_text_or_null  (c, "closing_comment",  sqlite3_column_text(stmt, 6));
     ipman_json_add_text_or_null  (c, "lessons_learned",  sqlite3_column_text(stmt, 7));
     ipman_json_add_text_or_null  (c, "open_items_summary", sqlite3_column_text(stmt, 8));
-    cJSON_AddNumberToObject(c, "followup_needed",
-                            (double)sqlite3_column_int64(stmt, 9));
+    cJSON_AddBoolToObject(c, "followup_needed",
+                          sqlite3_column_int(stmt, 9) ? 1 : 0);
     ipman_json_add_text_or_null  (c, "created_at",       sqlite3_column_text(stmt, 10));
     ipman_json_add_text_or_null  (c, "author",           sqlite3_column_text(stmt, 11));
     ipman_json_add_int64_or_null (c, "event_id",         stmt, 12);
+    ipman_json_add_text_or_null  (c, "commit_sha",       sqlite3_column_text(stmt, 13));
+    if (sqlite3_column_type(stmt, 14) != SQLITE_NULL) {
+        cJSON_AddBoolToObject(c, "dirty",
+                              sqlite3_column_int(stmt, 14) ? 1 : 0);
+    }
+    ipman_json_add_json_or_null  (c, "files_changed",
+                                  sqlite3_column_text(stmt, 15));
+    ipman_json_add_json_or_null  (c, "validations_run",
+                                  sqlite3_column_text(stmt, 16));
+    ipman_json_add_json_or_null  (c, "decisions",
+                                  sqlite3_column_text(stmt, 17));
     return c;
 }
 
@@ -386,7 +403,9 @@ int ipman_op_plan_export(const ipman_request_t *req, sqlite3 *db,
     const char *closures_sql =
         "SELECT id, entity_type, entity_id, closure_status, resolution, "
         "outcome_summary, closing_comment, lessons_learned, "
-        "open_items_summary, followup_needed, created_at, author, event_id "
+        "open_items_summary, followup_needed, created_at, author, event_id, "
+        "commit_sha, dirty, files_changed_json, "
+        "validations_json, decisions_json "
         "FROM closure_records WHERE "
         "(entity_type = 'plan'  AND entity_id = ?1) OR "
         "(entity_type = 'phase' AND entity_id IN (SELECT id FROM phases WHERE plan_id = ?1)) OR "

@@ -122,10 +122,10 @@ echo '{"protocol_version":2,"request_id":"r8","actor":"agent","op":"workspace.co
 Always export before closing or archiving — the snapshot survives outside the DB:
 
 ```sh
-echo '{"protocol_version":2,"request_id":"r9","actor":"agent","op":"plan.export","params":{"id":1}}' | ipman
-# → save result.snapshot to version control or a handoff artifact
+echo '{"protocol_version":2,"request_id":"r9","actor":"agent","op":"plan.export","params":{"plan_id":1}}' | ipman
+# → save result.export to version control or a handoff artifact
 
-echo '{"protocol_version":2,"request_id":"r10","actor":"agent","op":"plan.close","params":{"id":1,"outcome":"completed","outcome_summary":"All phases delivered"}}' | ipman
+echo '{"protocol_version":2,"request_id":"r10","actor":"agent","op":"plan.close","params":{"id":1,"outcome":"completed","outcome_summary":"All phases delivered","closing_comment":"Approved by stakeholder"}}' | ipman
 ```
 
 ### Defer and Resume
