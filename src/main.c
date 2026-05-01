@@ -155,7 +155,11 @@ static void print_usage(FILE *out) {
         "  -S  / --status              Show active plan, phase, task and pending count\n"
         "  -L  / --ls                  List pending tasks for the active plan\n"
         "  -SH / --show <selector>     Show detail for a task or phase\n"
-        "  -LG / --log                 Show recent workspace events\n"
+        "  -LG / --log [--summary-only] [--limit N]\n"
+        "                              Show recent workspace events. --summary-only\n"
+        "                              drops the Details column for a compact agent\n"
+        "                              view. --limit N (1-500, default 20) caps row\n"
+        "                              count; values out of range are clamped.\n"
         "  -N  / --next                Show active plan, cursor, instructions and Up next\n"
         "  -R  / --render <plan>       Render plan as Markdown (code, uid, label, or id)\n"
         "\n"
@@ -1803,30 +1807,78 @@ static int run_next(void) {
     return 0;
 }
 
-static int run_log(void) {
+/* Wire validation rejects limit outside [1, 500]. We clamp client-side so
+ * that `ipman -LG --limit 1000` produces 500 rows instead of an error,
+ * matching the documented "clamps to 500" behavior. */
+#define IPMAN_LOG_DEFAULT_LIMIT 20
+#define IPMAN_LOG_MIN_LIMIT     1
+#define IPMAN_LOG_MAX_LIMIT     500
+
+/* Maximum visible width of the rendered details cell. Beyond this the cell
+ * is truncated with "…" so a single noisy event cannot blow up table width. */
+#define IPMAN_LOG_DETAILS_MAX 80
+
+static int run_log(int argc, char **argv) {
+    int  limit         = IPMAN_LOG_DEFAULT_LIMIT;
+    int  summary_only  = 0;
+
+    for (int i = 2; i < argc; ++i) {
+        if (strcmp(argv[i], "--summary-only") == 0) {
+            summary_only = 1;
+        } else if (strcmp(argv[i], "--limit") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "ipman log: --limit requires a value\n");
+                return 1;
+            }
+            char *end = NULL;
+            long n = strtol(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0') {
+                fprintf(stderr, "ipman log: --limit must be a positive integer\n");
+                return 1;
+            }
+            if (n < IPMAN_LOG_MIN_LIMIT) n = IPMAN_LOG_MIN_LIMIT;
+            if (n > IPMAN_LOG_MAX_LIMIT) n = IPMAN_LOG_MAX_LIMIT;
+            limit = (int)n;
+        } else {
+            fprintf(stderr, "ipman log: unknown flag: %s\n", argv[i]);
+            return 1;
+        }
+    }
+
     char home[PATH_MAX], dbpath[PATH_MAX];
     sqlite3 *db = NULL;
     if (open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath, 0, NULL) != 0)
         return 1;
 
     cJSON *params = cJSON_CreateObject();
-    cJSON_AddNumberToObject(params, "limit", 20);
+    cJSON_AddNumberToObject(params, "limit", limit);
     cJSON *result = call_op(db, "event.list", params);
     cJSON_Delete(params);
     if (result == NULL) { ipman_db_close(db); return 1; }
 
     cli_table_t t;
-    const char *headers[] = {"When", "Event", "Entity", "Actor"};
-    cli_table_init(&t, 4, headers);
+    if (summary_only) {
+        const char *headers[] = {"ID", "When", "Event", "Entity", "Summary"};
+        cli_table_init(&t, 5, headers);
+    } else {
+        const char *headers[] = {"ID", "When", "Event", "Entity", "Summary", "Details"};
+        cli_table_init(&t, 6, headers);
+    }
 
     cJSON *events = cJSON_GetObjectItemCaseSensitive(result, "events");
     cJSON *ev;
     cJSON_ArrayForEach(ev, events) {
+        cJSON *id          = cJSON_GetObjectItemCaseSensitive(ev, "id");
         cJSON *when        = cJSON_GetObjectItemCaseSensitive(ev, "event_at");
         cJSON *event_type  = cJSON_GetObjectItemCaseSensitive(ev, "event_type");
         cJSON *entity_type = cJSON_GetObjectItemCaseSensitive(ev, "entity_type");
         cJSON *entity_id   = cJSON_GetObjectItemCaseSensitive(ev, "entity_id");
-        cJSON *actor       = cJSON_GetObjectItemCaseSensitive(ev, "actor");
+        cJSON *summary     = cJSON_GetObjectItemCaseSensitive(ev, "summary");
+        cJSON *details     = cJSON_GetObjectItemCaseSensitive(ev, "details");
+
+        char id_str[16] = "";
+        if (cJSON_IsNumber(id))
+            snprintf(id_str, sizeof id_str, "%d", (int)id->valuedouble);
 
         char entity_str[64] = "";
         if (cJSON_IsString(entity_type) && cJSON_IsNumber(entity_id))
@@ -1839,13 +1891,45 @@ static int run_log(void) {
             snprintf(when_str, sizeof when_str, "%.19s", when->valuestring);
         }
 
-        const char *row[] = {
-            when_str,
-            (event_type  && cJSON_IsString(event_type))  ? event_type->valuestring  : "",
-            entity_str,
-            (actor       && cJSON_IsString(actor))        ? actor->valuestring       : "",
-        };
-        cli_table_add_row(&t, row);
+        char details_str[IPMAN_LOG_DETAILS_MAX + 8] = "";
+        char *details_owned = NULL;
+        if (!summary_only && details != NULL && !cJSON_IsNull(details)) {
+            details_owned = cJSON_PrintUnformatted(details);
+            if (details_owned != NULL) {
+                size_t n = strlen(details_owned);
+                if (n <= IPMAN_LOG_DETAILS_MAX) {
+                    snprintf(details_str, sizeof details_str, "%s", details_owned);
+                } else {
+                    /* Truncate and mark with a single-byte ellipsis (UTF-8 "…"
+                     * is 3 bytes, but cli_output's width math counts bytes —
+                     * we keep it ASCII to avoid a width mismatch). */
+                    snprintf(details_str, sizeof details_str, "%.*s...",
+                             IPMAN_LOG_DETAILS_MAX - 3, details_owned);
+                }
+                free(details_owned);
+            }
+        }
+
+        if (summary_only) {
+            const char *row[] = {
+                id_str,
+                when_str,
+                (event_type && cJSON_IsString(event_type)) ? event_type->valuestring : "",
+                entity_str,
+                (summary    && cJSON_IsString(summary))    ? summary->valuestring    : "",
+            };
+            cli_table_add_row(&t, row);
+        } else {
+            const char *row[] = {
+                id_str,
+                when_str,
+                (event_type && cJSON_IsString(event_type)) ? event_type->valuestring : "",
+                entity_str,
+                (summary    && cJSON_IsString(summary))    ? summary->valuestring    : "",
+                details_str,
+            };
+            cli_table_add_row(&t, row);
+        }
     }
 
     cli_table_print(&t, stdout);
@@ -1885,7 +1969,7 @@ int main(int argc, char **argv) {
     if (cmd != NULL && strcmp(cmd, "sql")    == 0) { return run_sql_cmd(argc, argv); }
     if (cmd != NULL && strcmp(cmd, "status") == 0) { return run_status(); }
     if (cmd != NULL && strcmp(cmd, "ls")     == 0) { return run_ls(); }
-    if (cmd != NULL && strcmp(cmd, "log")    == 0) { return run_log(); }
+    if (cmd != NULL && strcmp(cmd, "log")    == 0) { return run_log(argc, argv); }
     if (cmd != NULL && strcmp(cmd, "next")   == 0) { return run_next(); }
     if (cmd != NULL && strcmp(cmd, "render") == 0) {
         if (argc < 3) {
