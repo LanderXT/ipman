@@ -222,6 +222,10 @@ static cJSON *closure_from_row(sqlite3_stmt *stmt) {
     }
     ipman_json_add_json_or_null(closure, "files_changed",
                                 sqlite3_column_text(stmt, 15));
+    ipman_json_add_json_or_null(closure, "validations_run",
+                                sqlite3_column_text(stmt, 16));
+    ipman_json_add_json_or_null(closure, "decisions",
+                                sqlite3_column_text(stmt, 17));
     return closure;
 }
 
@@ -894,7 +898,8 @@ int ipman_op_closure_get(const ipman_request_t *req, sqlite3 *db,
         "SELECT id, entity_type, entity_id, closure_status, resolution, "
         "outcome_summary, closing_comment, lessons_learned, "
         "open_items_summary, followup_needed, created_at, author, event_id, "
-        "commit_sha, dirty, files_changed_json "
+        "commit_sha, dirty, files_changed_json, "
+        "validations_json, decisions_json "
         "FROM closure_records "
         "WHERE entity_type = ? AND entity_id = ? "
         "ORDER BY id DESC;";

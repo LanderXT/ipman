@@ -63,6 +63,15 @@ typedef struct {
     int dirty;
     int dirty_set;
     const cJSON *files_changed;
+    /*
+     * Structured evidence (Phase 12). Both optional and borrowed from the
+     * cJSON request tree; serialized at INSERT time.
+     *
+     *  - validations_run: array of objects {cmd: string, status: string}.
+     *  - decisions:       array of strings.
+     */
+    const cJSON *validations_run;
+    const cJSON *decisions;
 } task_close_t;
 
 typedef struct {
@@ -763,6 +772,49 @@ static int read_task_close(cJSON *params, task_close_t *close_data,
             }
         }
         close_data->files_changed = files;
+    }
+
+    cJSON *vals = cJSON_GetObjectItemCaseSensitive(params, "validations_run");
+    if (vals != NULL && !cJSON_IsNull(vals)) {
+        if (!cJSON_IsArray(vals)) {
+            *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+            *err_msg_out = "validations_run must be an array of {cmd, status} objects or null";
+            return -1;
+        }
+        cJSON *entry = NULL;
+        cJSON_ArrayForEach(entry, vals) {
+            cJSON *cmd = cJSON_GetObjectItemCaseSensitive(entry, "cmd");
+            cJSON *status = cJSON_GetObjectItemCaseSensitive(entry, "status");
+            if (!cJSON_IsObject(entry) ||
+                !cJSON_IsString(cmd) || cmd->valuestring == NULL ||
+                cmd->valuestring[0] == '\0' ||
+                !cJSON_IsString(status) || status->valuestring == NULL ||
+                status->valuestring[0] == '\0') {
+                *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+                *err_msg_out = "validations_run entries must be objects with non-empty cmd and status strings";
+                return -1;
+            }
+        }
+        close_data->validations_run = vals;
+    }
+
+    cJSON *decs = cJSON_GetObjectItemCaseSensitive(params, "decisions");
+    if (decs != NULL && !cJSON_IsNull(decs)) {
+        if (!cJSON_IsArray(decs)) {
+            *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+            *err_msg_out = "decisions must be an array of strings or null";
+            return -1;
+        }
+        cJSON *entry = NULL;
+        cJSON_ArrayForEach(entry, decs) {
+            if (!cJSON_IsString(entry) || entry->valuestring == NULL ||
+                entry->valuestring[0] == '\0') {
+                *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+                *err_msg_out = "decisions must be an array of non-empty strings or null";
+                return -1;
+            }
+        }
+        close_data->decisions = decs;
     }
     return 0;
 }
@@ -3053,17 +3105,37 @@ static int insert_task_closure_record(sqlite3 *db,
         "entity_type, entity_id, closure_status, resolution, outcome_summary, "
         "closing_comment, lessons_learned, open_items_summary, "
         "followup_needed, author, event_id, "
-        "commit_sha, dirty, files_changed_json"
-        ") VALUES ('task', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
+        "commit_sha, dirty, files_changed_json, "
+        "validations_json, decisions_json"
+        ") VALUES ('task', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
     char *files_changed_json = NULL;
+    char *validations_json   = NULL;
+    char *decisions_json     = NULL;
     if (close_data->files_changed != NULL) {
         files_changed_json = cJSON_PrintUnformatted(close_data->files_changed);
         if (files_changed_json == NULL) return -1;
+    }
+    if (close_data->validations_run != NULL) {
+        validations_json = cJSON_PrintUnformatted(close_data->validations_run);
+        if (validations_json == NULL) {
+            if (files_changed_json != NULL) cJSON_free(files_changed_json);
+            return -1;
+        }
+    }
+    if (close_data->decisions != NULL) {
+        decisions_json = cJSON_PrintUnformatted(close_data->decisions);
+        if (decisions_json == NULL) {
+            if (files_changed_json != NULL) cJSON_free(files_changed_json);
+            if (validations_json != NULL)   cJSON_free(validations_json);
+            return -1;
+        }
     }
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
         if (files_changed_json != NULL) cJSON_free(files_changed_json);
+        if (validations_json   != NULL) cJSON_free(validations_json);
+        if (decisions_json     != NULL) cJSON_free(decisions_json);
         return -1;
     }
     sqlite3_bind_int64(stmt, 1, task_id);
@@ -3083,9 +3155,13 @@ static int insert_task_closure_record(sqlite3 *db,
         sqlite3_bind_null(stmt, 12);
     }
     bind_optional_text(stmt, 13, files_changed_json);
+    bind_optional_text(stmt, 14, validations_json);
+    bind_optional_text(stmt, 15, decisions_json);
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     if (files_changed_json != NULL) cJSON_free(files_changed_json);
+    if (validations_json   != NULL) cJSON_free(validations_json);
+    if (decisions_json     != NULL) cJSON_free(decisions_json);
     return rc == SQLITE_DONE ? 0 : -1;
 }
 
@@ -4193,6 +4269,7 @@ const ipman_param_desc_t ipman_op_task_close_params[] = {
     { "id" }, { "outcome_summary" }, { "closing_comment" },
     { "lessons_learned" }, { "open_items_summary" }, { "followup_needed" },
     { "commit_sha" }, { "dirty" }, { "files_changed" },
+    { "validations_run" }, { "decisions" },
     { NULL },
 };
 
