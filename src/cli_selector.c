@@ -37,7 +37,10 @@ static cJSON *dispatch_op(sqlite3 *db,
                           char *err_buf, size_t err_buf_size) {
     ipman_request_t req;
     memset(&req, 0, sizeof req);
-    req.protocol_version = 1;          /* in-process; no parser involved */
+    /* Synthetic in-process request: skips ipman_request_parse. Set the
+     * field to the real wire version (2) so an inspecting handler sees the
+     * same value as on the JSON-on-stdin path. */
+    req.protocol_version = 2;
     req.request_id       = "cli-selector";
     req.actor            = "cli";
     req.op               = op;

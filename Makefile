@@ -136,119 +136,34 @@ $(BUILD_DIR)/third_party/cjson/cJSON.o: third_party/cjson/cJSON.c
 	$(CC) $(TP_CFLAGS) -c -o $@ $<
 
 # Unit tests: each tests/unit/test_*.c is compiled into its own binary,
-# linked against the app .o files it needs plus cJSON. We stay off the
-# DB/migration path here — protocol unit tests don't need storage.
-PROTOCOL_TEST_OBJS := \
-    $(BUILD_DIR)/protocol.o \
-    $(BUILD_DIR)/third_party/cjson/cJSON.o
+# linked against the app .o files it needs plus cJSON. The unit list is
+# wildcard-driven (UNIT_BIN), so a recipe only fires for a test that has
+# a corresponding source file under tests/unit/.
 
-PLAN_CREATE_TEST_OBJS := \
+CLI_SELECTOR_TEST_OBJS := \
     $(BUILD_DIR)/agent_docs.o \
-    $(BUILD_DIR)/comment_ops.o \
-    $(BUILD_DIR)/context_ops.o \
-    $(BUILD_DIR)/db.o \
-    $(BUILD_DIR)/dispatch.o \
-    $(BUILD_DIR)/event_ops.o \
-    $(BUILD_DIR)/export_ops.o \
-    $(BUILD_DIR)/json_helpers.o \
-    $(BUILD_DIR)/log.o \
-    $(BUILD_DIR)/migrations.o \
-    $(BUILD_DIR)/phase_ops.o \
-    $(BUILD_DIR)/plan_ops.o \
-    $(BUILD_DIR)/ipman_home.o \
-    $(BUILD_DIR)/ipman_key.o \
-    $(BUILD_DIR)/protocol.o \
-    $(BUILD_DIR)/task_ops.o \
-    $(BUILD_DIR)/validation.o \
-    $(GEN_OBJ) \
-    $(BUILD_DIR)/third_party/cjson/cJSON.o
-
-TASK_OPS_TEST_OBJS := \
-    $(BUILD_DIR)/agent_docs.o \
-    $(BUILD_DIR)/comment_ops.o \
-    $(BUILD_DIR)/context_ops.o \
-    $(BUILD_DIR)/db.o \
-    $(BUILD_DIR)/dispatch.o \
-    $(BUILD_DIR)/event_ops.o \
-    $(BUILD_DIR)/export_ops.o \
-    $(BUILD_DIR)/json_helpers.o \
-    $(BUILD_DIR)/log.o \
-    $(BUILD_DIR)/migrations.o \
-    $(BUILD_DIR)/phase_ops.o \
-    $(BUILD_DIR)/plan_ops.o \
-    $(BUILD_DIR)/ipman_home.o \
-    $(BUILD_DIR)/ipman_key.o \
-    $(BUILD_DIR)/protocol.o \
-    $(BUILD_DIR)/task_ops.o \
-    $(BUILD_DIR)/validation.o \
-    $(GEN_OBJ) \
-    $(BUILD_DIR)/third_party/cjson/cJSON.o
-
-PHASE13_TEST_OBJS := $(TASK_OPS_TEST_OBJS)
-
-CLI_SELECTOR_TEST_OBJS := $(TASK_OPS_TEST_OBJS) \
     $(BUILD_DIR)/cli_selector.o \
-    $(BUILD_DIR)/instruction_ops.o
-
-AGENT_DOCS_TEST_OBJS := \
-    $(BUILD_DIR)/agent_docs.o \
     $(BUILD_DIR)/comment_ops.o \
     $(BUILD_DIR)/context_ops.o \
     $(BUILD_DIR)/db.o \
     $(BUILD_DIR)/dispatch.o \
     $(BUILD_DIR)/event_ops.o \
     $(BUILD_DIR)/export_ops.o \
-    $(BUILD_DIR)/json_helpers.o \
-    $(BUILD_DIR)/log.o \
-    $(BUILD_DIR)/phase_ops.o \
-    $(BUILD_DIR)/plan_ops.o \
+    $(BUILD_DIR)/instruction_ops.o \
     $(BUILD_DIR)/ipman_home.o \
     $(BUILD_DIR)/ipman_key.o \
+    $(BUILD_DIR)/json_helpers.o \
+    $(BUILD_DIR)/log.o \
+    $(BUILD_DIR)/migrations.o \
+    $(BUILD_DIR)/phase_ops.o \
+    $(BUILD_DIR)/plan_ops.o \
     $(BUILD_DIR)/protocol.o \
     $(BUILD_DIR)/task_ops.o \
     $(BUILD_DIR)/validation.o \
+    $(GEN_OBJ) \
     $(BUILD_DIR)/third_party/cjson/cJSON.o
-
-$(BUILD_DIR)/tests/test_protocol: tests/unit/test_protocol.c $(PROTOCOL_TEST_OBJS)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^
-
-$(BUILD_DIR)/tests/test_plan_create: tests/unit/test_plan_create.c $(PLAN_CREATE_TEST_OBJS)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^ $(LDLIBS)
-
-$(BUILD_DIR)/tests/test_task_ops: tests/unit/test_task_ops.c $(TASK_OPS_TEST_OBJS)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^ $(LDLIBS)
-
-$(BUILD_DIR)/tests/test_phase13_integrity: tests/unit/test_phase13_integrity.c $(PHASE13_TEST_OBJS)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^ $(LDLIBS)
-
-$(BUILD_DIR)/tests/test_agent_docs: tests/unit/test_agent_docs.c $(AGENT_DOCS_TEST_OBJS)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^ $(LDLIBS)
 
 $(BUILD_DIR)/tests/test_cli_selector: tests/unit/test_cli_selector.c $(CLI_SELECTOR_TEST_OBJS)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^ $(LDLIBS)
-
-IPMAN_KEY_TEST_OBJS := \
-    $(BUILD_DIR)/log.o \
-    $(BUILD_DIR)/ipman_key.o
-
-$(BUILD_DIR)/tests/test_ipman_key: tests/unit/test_ipman_key.c $(IPMAN_KEY_TEST_OBJS)
-	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^ $(LDLIBS)
-
-# db.c pulls in ipman_key.o for apply_key(), which the begin-retry test never
-# exercises (it opens a plain SQLite file directly). The dep is link-time only.
-DB_BEGIN_TEST_OBJS := \
-    $(BUILD_DIR)/db.o \
-    $(BUILD_DIR)/log.o \
-    $(BUILD_DIR)/ipman_key.o
-
-$(BUILD_DIR)/tests/test_db_begin: tests/unit/test_db_begin.c $(DB_BEGIN_TEST_OBJS)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(APP_INCLUDES) -Isrc -o $@ $^ $(LDLIBS)
 

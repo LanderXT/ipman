@@ -172,6 +172,7 @@ static void print_usage(FILE *out) {
         "Setup:\n"
         "  -I  / --init                Initialize workspace\n"
         "  -U  / --usage               Show this help\n"
+        "  -V  / --version             Print version and exit\n"
         "\n"
         "Agent protocol (JSON on stdin):\n"
         "  ipman < request.json\n"
@@ -444,6 +445,7 @@ static const char *parse_command(const char *arg) {
     if (strcmp(arg, "activate") == 0 ||                              strcmp(arg, "--activate")== 0) return "activate";
     if (strcmp(arg, "b64")      == 0 || strcmp(arg, "-B")  == 0 || strcmp(arg, "--b64")     == 0) return "b64";
     if (strcmp(arg, "usage")    == 0 || strcmp(arg, "-U")  == 0 || strcmp(arg, "--usage")   == 0) return "usage";
+    if (strcmp(arg, "version")  == 0 || strcmp(arg, "-V")  == 0 || strcmp(arg, "--version") == 0) return "version";
     return NULL;
 }
 
@@ -456,7 +458,11 @@ static const char *parse_command(const char *arg) {
 static cJSON *call_op(sqlite3 *db, const char *op, cJSON *params) {
     ipman_request_t req;
     memset(&req, 0, sizeof req);
-    req.protocol_version = 1;
+    /* Synthetic in-process request: bypasses ipman_request_parse, so this
+     * field is informational only. Set it to the real wire version (2) so
+     * any future handler that inspects it sees the same value the agent
+     * envelope carries on the actual JSON-on-stdin path. */
+    req.protocol_version = 2;
     req.request_id       = "cli";
     req.actor            = "cli";
     req.op               = op;
@@ -1715,6 +1721,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (cmd != NULL && strcmp(cmd, "usage")  == 0) { print_usage(stdout); return 0; }
+    if (cmd != NULL && strcmp(cmd, "version") == 0) { fprintf(stdout, "ipman %s\n", IPMAN_VERSION); return 0; }
     if (cmd != NULL && strcmp(cmd, "init")   == 0) { return run_init(); }
     if (cmd != NULL && strcmp(cmd, "migrate-encrypt") == 0) { return run_migrate_encrypt(); }
     if (cmd != NULL && strcmp(cmd, "export") == 0) { return run_export(argc, argv); }
