@@ -574,6 +574,80 @@ static void render_comments(FILE *out, sqlite3 *db, sqlite3_int64 plan_id) {
     if (!first) fprintf(out, "---\n\n");
 }
 
+/* Render `[{cmd, status}, ...]` as a 2-column markdown table. */
+static void render_validations_table(FILE *out, const cJSON *vals) {
+    if (!cJSON_IsArray(vals) || cJSON_GetArraySize(vals) == 0) return;
+    fprintf(out, "**Validations**\n\n");
+    fprintf(out, "| Command | Status |\n|:--------|:-------|\n");
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, vals) {
+        const cJSON *cmd = cJSON_GetObjectItemCaseSensitive(entry, "cmd");
+        const cJSON *status = cJSON_GetObjectItemCaseSensitive(entry, "status");
+        fprintf(out, "| `%s` | %s |\n",
+                cJSON_IsString(cmd) && cmd->valuestring ? cmd->valuestring : "—",
+                cJSON_IsString(status) && status->valuestring ? status->valuestring : "—");
+    }
+    fprintf(out, "\n");
+}
+
+/* Render `[string, ...]` as a markdown bullet list. */
+static void render_decisions_list(FILE *out, const cJSON *decs) {
+    if (!cJSON_IsArray(decs) || cJSON_GetArraySize(decs) == 0) return;
+    fprintf(out, "**Decisions**\n\n");
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, decs) {
+        if (cJSON_IsString(entry) && entry->valuestring)
+            fprintf(out, "- %s\n", entry->valuestring);
+    }
+    fprintf(out, "\n");
+}
+
+/*
+ * Surface task-level closure evidence (validations_run, decisions) collected
+ * across the plan. Plan-level closure has its own dedicated section; this
+ * one only fires when at least one task has non-empty evidence to render,
+ * so plans without structured evidence stay clean.
+ */
+static void render_task_evidence(FILE *out, sqlite3 *db, sqlite3_int64 plan_id) {
+    const char *sql =
+        "SELECT t.uid, t.title, c.validations_json, c.decisions_json "
+        "FROM closure_records c "
+        "JOIN tasks t ON t.id = c.entity_id "
+        "WHERE c.entity_type = 'task' AND t.plan_id = ? "
+        "  AND (c.validations_json IS NOT NULL OR c.decisions_json IS NOT NULL) "
+        "ORDER BY t.local_seq ASC;";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return;
+    sqlite3_bind_int64(stmt, 1, plan_id);
+    int first = 1;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        if (first) { fprintf(out, "## Task Evidence\n\n"); first = 0; }
+        const char *uid   = (const char *)sqlite3_column_text(stmt, 0);
+        const char *title = (const char *)sqlite3_column_text(stmt, 1);
+        const char *vj    = (const char *)sqlite3_column_text(stmt, 2);
+        const char *dj    = (const char *)sqlite3_column_text(stmt, 3);
+        fprintf(out, "### `%s` — %s\n\n",
+                uid ? uid : "—",
+                title ? title : "—");
+        if (vj != NULL) {
+            cJSON *arr = cJSON_Parse(vj);
+            if (arr != NULL) {
+                render_validations_table(out, arr);
+                cJSON_Delete(arr);
+            }
+        }
+        if (dj != NULL) {
+            cJSON *arr = cJSON_Parse(dj);
+            if (arr != NULL) {
+                render_decisions_list(out, arr);
+                cJSON_Delete(arr);
+            }
+        }
+    }
+    sqlite3_finalize(stmt);
+    if (!first) fprintf(out, "---\n\n");
+}
+
 static void render_closure(FILE *out, sqlite3 *db, sqlite3_int64 plan_id) {
     const char *sql =
         "SELECT resolution, outcome_summary, closing_comment, "
@@ -646,6 +720,7 @@ int ipman_render_md(sqlite3 *db, sqlite3_int64 plan_id, FILE *out) {
     render_progress(out, db, plan_id);
     render_phases(out, db, plan_id);
     render_comments(out, db, plan_id);
+    render_task_evidence(out, db, plan_id);
     render_closure(out, db, plan_id);
     render_footer(out);
 
