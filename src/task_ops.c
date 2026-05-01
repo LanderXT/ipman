@@ -4175,6 +4175,7 @@ int ipman_op_task_replace(const ipman_request_t *req, sqlite3 *db,
 const ipman_param_desc_t ipman_op_task_close_params[] = {
     { "id" }, { "outcome_summary" }, { "closing_comment" },
     { "lessons_learned" }, { "open_items_summary" }, { "followup_needed" },
+    { "commit_sha" }, { "dirty" }, { "files_changed" },
     { NULL },
 };
 
