@@ -74,9 +74,9 @@ comment_update_schema="$TMP/home/schemas/ipman.op.comment.update.request.schema.
 comment_invalidate_schema="$TMP/home/schemas/ipman.op.comment.invalidate.request.schema.json"
 plan_comment_add_schema="$TMP/home/schemas/ipman.op.plan.comment_add.request.schema.json"
 
-# v2 schema shape: non-lookup ops have no anyOf — id is in required directly.
-has_no_anyof "$task_get_schema"
-has_no_anyof "$plan_get_schema"
+# v2 schema shape: non-lookup selectors require id and reject uid/label/code.
+has_anyof_required "$task_get_schema" '["id"]'
+has_anyof_required "$plan_get_schema" '["id"]'
 jq -e '.properties.params.properties | has("uid") | not' "$task_get_schema" >/dev/null
 jq -e '.properties.params.properties | has("label") | not' "$task_get_schema" >/dev/null
 jq -e '.properties.params.properties | has("code") | not' "$plan_get_schema" >/dev/null
@@ -108,7 +108,7 @@ has_oneof_required "$plan_activate_schema" '["id"]'
 has_oneof_required "$plan_activate_schema" '["code"]'
 
 # Required at top-level has params declared, but params.required must not list id
-# (id appears via anyOf or as a regular property, not as a required scalar).
+# (id appears via allOf/anyOf so selector alternatives stay consistently shaped).
 jq -e '(.properties.params.required // []) | index("id") | not' "$task_get_schema" >/dev/null
 
 # Selector params trimmed where they used to leak through.

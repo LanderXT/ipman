@@ -82,10 +82,12 @@ static cJSON *test_call_op(sqlite3 *db, const char *op, cJSON *params) {
     return result;
 }
 
-static long create_plan(sqlite3 *db, const char *title, const char *label) {
+static long create_plan(sqlite3 *db, const char *title,
+                        const char *label, const char *code) {
     cJSON *p = cJSON_CreateObject();
     cJSON_AddStringToObject(p, "title", title);
     cJSON_AddStringToObject(p, "label", label);
+    if (code != NULL) cJSON_AddStringToObject(p, "code", code);
     cJSON_AddStringToObject(p, "summary", "fixture");
     cJSON *r = test_call_op(db, "plan.create", p);
     cJSON_Delete(p);
@@ -162,7 +164,7 @@ typedef struct {
 } fixture_t;
 
 static int build_fixture(sqlite3 *db, fixture_t *f) {
-    f->plan_id = create_plan(db, "Test Plan", "test-plan");
+    f->plan_id = create_plan(db, "Test Plan", "test-plan", "TP-1");
     if (f->plan_id < 0) { fprintf(stderr, "plan.create failed\n"); return -1; }
 
     f->phase_id = create_phase(db, f->plan_id, "Alpha Phase", "alpha-phase");
@@ -295,6 +297,19 @@ static void case_label_with_active_plan(sqlite3 *db, const fixture_t *f) {
     ASSERT_EQ_INT(rc, 0);
     ASSERT_EQ_INT(id, f->task_id);
     ASSERT_EQ_INT(k, CLI_SELECTOR_KIND_TASK);
+}
+
+static void case_plan_code_selector(sqlite3 *db, const fixture_t *f) {
+    g_case = "plan_code_selector";
+    char err[CLI_SELECTOR_ERR_LEN];
+    long id = 0;
+    cli_selector_kind_t k = 0;
+    int rc = cli_resolve_selector(db, "TP-1",
+                                  CLI_SELECTOR_KIND_PLAN,
+                                  &id, &k, err, sizeof err);
+    ASSERT_EQ_INT(rc, 0);
+    ASSERT_EQ_INT(id, f->plan_id);
+    ASSERT_EQ_INT(k, CLI_SELECTOR_KIND_PLAN);
 }
 
 static void case_label_phase_with_active_plan(sqlite3 *db, const fixture_t *f) {
@@ -443,6 +458,7 @@ int main(void) {
 
     /* Re-activate plan for the rest. */
     case_label_with_active_plan(db, &f);
+    case_plan_code_selector(db, &f);
     case_label_phase_with_active_plan(db, &f);
     case_label_ambiguity_task_wins(db, &f);
     case_label_ambiguity_phase_when_filtered(db, &f);

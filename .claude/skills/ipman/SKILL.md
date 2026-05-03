@@ -249,7 +249,7 @@ echo '{"protocol_version":2,"request_id":"h6","actor":"agent","op":"closure.get"
 ```
 
 Key points:
-- `id` is canonical for both input and output. Every entity op (`*.get`, `*.update`, lifecycle ops, etc.) accepts only `id` as a selector. Responses return `id` and `label`; `uid`/`code` are not surfaced in API responses.
+- `id` is canonical for both input and output. Every entity op (`*.get`, `*.update`, lifecycle ops, etc.) accepts only `id` as a selector. Ordinary entity responses return `id` and `label`; `uid` is storage/export-only, and plan `code` is surfaced only where activation context or exports need the display handle.
 - To resolve a `label` or plan `code` into an `id`, call the matching `*.lookup` op: `plan.lookup` accepts `uid`/`label`/`code`; `phase.lookup` and `task.lookup` accept `uid` or `label` (label requires `plan_id` scope). Lookup ops return `{id: N}` only — call them once, then use the `id` everywhere else.
 - `plan.activate` is the single non-lookup op that still accepts `code` directly (alongside `id`), since it is the entry point that establishes the active plan for a session.
 - `status`, `resolution`, and `origin_type` are three independent concepts — don't conflate them.

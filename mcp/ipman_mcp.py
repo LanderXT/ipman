@@ -40,15 +40,15 @@ def _build_tool_list(manifest: dict) -> list:
     for op in manifest.get("operations", []):
         name = op["op"]
         params_schema = _params_schema(op)
+        input_schema = dict(params_schema)
+        input_schema.setdefault("type", "object")
+        input_schema.setdefault("properties", {})
+        input_schema.setdefault("required", [])
+        input_schema.setdefault("additionalProperties", False)
         tools.append({
             "name": name,
             "description": params_schema.get("description", name),
-            "inputSchema": {
-                "type": "object",
-                "properties": params_schema.get("properties", {}),
-                "required": params_schema.get("required", []),
-                "additionalProperties": False,
-            },
+            "inputSchema": input_schema,
         })
     return tools
 
@@ -72,7 +72,7 @@ def _call_ipman(op: str, arguments: dict, request_id) -> dict:
     except FileNotFoundError:
         return {"isError": True, "content": [{"type": "text", "text": f"ipman binary not found: {_ipman_bin()}"}]}
 
-    if proc.returncode != 0 or not proc.stdout:
+    if not proc.stdout:
         stderr = proc.stderr.decode("utf-8", errors="replace")
         return {"isError": True, "content": [{"type": "text", "text": f"ipman exited {proc.returncode}: {stderr}"}]}
 

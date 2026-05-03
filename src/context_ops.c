@@ -144,6 +144,8 @@ static cJSON *plan_from_row(sqlite3_stmt *stmt) {
     cJSON *plan = cJSON_CreateObject();
     if (plan == NULL) return NULL;
     cJSON_AddNumberToObject(plan, "id", (double)sqlite3_column_int64(stmt, 0));
+    ipman_json_add_text_or_null(plan, "code", sqlite3_column_text(stmt, 1));
+    ipman_json_add_text_or_null(plan, "label", sqlite3_column_text(stmt, 17));
     ipman_json_add_text_or_null(plan, "title", sqlite3_column_text(stmt, 2));
     ipman_json_add_text_or_null(plan, "summary", sqlite3_column_text(stmt, 3));
     ipman_json_add_text_or_null(plan, "description", sqlite3_column_text(stmt, 4));
@@ -167,12 +169,12 @@ static cJSON *load_plan_by_ref(sqlite3 *db,
     const char *sql_by_id =
         "SELECT id, code, title, summary, description, status, priority, "
         "created_at, updated_at, opened_at, closed_at, archived_at, owner, "
-        "target_date, tags, version_label "
+        "target_date, tags, version_label, uid, label "
         "FROM plans WHERE id = ?;";
     const char *sql_by_code =
         "SELECT id, code, title, summary, description, status, priority, "
         "created_at, updated_at, opened_at, closed_at, archived_at, owner, "
-        "target_date, tags, version_label "
+        "target_date, tags, version_label, uid, label "
         "FROM plans WHERE code = ?;";
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, code == NULL ? sql_by_id : sql_by_code,
@@ -198,9 +200,7 @@ static cJSON *load_phase(sqlite3 *db, sqlite3_int64 phase_id) {
     const char *sql =
         "SELECT id, plan_id, title, summary, description, status, sequence_no, "
         "created_at, updated_at, opened_at, closed_at, owner, "
-        "target_start_date, target_end_date, "
-        "(SELECT code FROM plans WHERE id = phases.plan_id), "
-        "local_seq "
+        "target_start_date, target_end_date, local_seq, uid, label "
         "FROM phases WHERE id = ?;";
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
@@ -220,8 +220,7 @@ static cJSON *load_task(sqlite3 *db, sqlite3_int64 task_id) {
         "assignee, created_at, updated_at, started_at, closed_at, "
         "deferred_until, blocked_reason, reason_code, reason_text, due_date, "
         "target_start_date, estimate, origin_ref_type, origin_ref_id, "
-        "origin_task_id, local_seq, "
-        "(SELECT code FROM plans WHERE plans.id = tasks.plan_id) "
+        "origin_task_id, local_seq, uid, label "
         "FROM tasks WHERE id = ?;";
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);

@@ -158,8 +158,8 @@ Plan ── one per implementation effort, holds outcome and tags
 |---|---|---|
 | `id` | Canonical input and output identifier | Workspace-scoped integer (e.g. `42`). The only selector accepted by `*.get`, `*.update`, lifecycle ops, etc. |
 | `label` | Human-readable slug | Auto-derived from `title` (or supplied at creation). Scoped per parent and renameable. Returned on responses for human display. |
-| `code` | User-supplied plan shorthand (input only) | Short label like `REL-001`, set at `plan.create`. Used as a `plan.lookup` key and `plan.activate` selector. Not echoed in API responses. |
-| `uid` | Stored row identifier (storage only) | Internal `task_<id>`/`phase_<id>`/`plan_<id>` form. Persisted in the database for archival/export round-trip but not surfaced in any API response. |
+| `code` | User-supplied plan shorthand | Short label like `REL-001`, set at `plan.create`. Used as a `plan.lookup` key and `plan.activate` selector; returned where workspace context and exports need the display handle. |
+| `uid` | Stored row identifier (storage only) | Internal `task_<id>`/`phase_<id>`/`plan_<id>` form. Persisted in the database for archival/export round-trip but omitted from ordinary entity responses. |
 
 To resolve a `label` or `code` to an `id`, call the matching `*.lookup` op (`plan.lookup`, `phase.lookup`, `task.lookup`). Lookup ops are the single legitimate way to translate human-readable handles into the canonical `id`.
 
@@ -256,7 +256,7 @@ IPMAN_BIN=$(which ipman) \
 python3 mcp/ipman_mcp.py
 ```
 
-The bridge reads `manifest.json` once at startup, builds one MCP tool per registered operation (62 of them after `ipman init`), and forwards `tools/call` invocations as JSON envelopes to the `ipman` binary. No third-party Python deps; Python 3.10+ required for the type-hint syntax. See [`mcp/README.md`](mcp/README.md) for client-config snippets and troubleshooting.
+The bridge reads `manifest.json` once at startup, builds one MCP tool per registered operation (65 of them after `ipman init`), and forwards `tools/call` invocations as JSON envelopes to the `ipman` binary. No third-party Python deps; Python 3.10+ required for the type-hint syntax. See [`mcp/README.md`](mcp/README.md) for client-config snippets and troubleshooting.
 
 ## Security
 
@@ -423,13 +423,7 @@ Override paths with `PREFIX=`, `BINDIR=`, `CLAUDE_SKILLDIR=`, `CODEX_SKILLDIR=`,
 make test
 ```
 
-Runs three integration scripts:
-
-- `000_operation_docs_parity.sh` — every registered op has a generated schema and vice versa
-- `010_schema_allowlist_behavior.sh` — request validation rejects unknown params
-- `020_instruction_ops.sh` — instruction lifecycle round-trip
-
-Plus unit tests under `tests/unit/`.
+Runs the C unit tests under `tests/unit/`, then every shell-driven integration test under `tests/integration/`. The integration suite covers generated operation-doc parity, request allowlist behavior, instruction lifecycle, CLI veneers, closure evidence, logging flags, and MCP schema/error handling.
 
 ## Project layout
 
@@ -444,7 +438,9 @@ ipman/
 │   ├── *_ops.c           # One file per entity (plan, phase, task, …)
 │   └── agent_docs.c      # Per-op schema and index generators
 ├── migrations/
-│   └── 0001_initial_schema.sql   # Consolidated baseline schema
+│   ├── 0001_initial_schema.sql   # Consolidated baseline schema
+│   ├── 0002_extend_closures.sql  # Git context fields
+│   └── 0003_closure_evidence.sql # Structured validation/decision evidence
 ├── scripts/              # Build-time embedders (sql, skill)
 ├── tests/
 │   ├── integration/      # Shell-driven black-box tests
@@ -462,15 +458,15 @@ The "single source of truth" pattern is deliberate: the dispatch table in `src/d
 
 ## Status and roadmap
 
-**v2.1.0** — current release. Stable surfaces:
+**v2.2.0** — current release. Stable surfaces:
 
-- JSON request/response protocol at `protocol_version: 2` (unchanged from v2.0; v2.1 added zero protocol ops)
+- JSON request/response protocol at `protocol_version: 2` (unchanged from v2.0; v2.1/v2.2 added zero protocol ops)
 - All 65 operations across ten entities
 - Encrypted SQLite storage layout (SQLCipher + Argon2id)
 - `.ipman/` generated documentation tree (regenerated on every `init`)
 - Bundled Claude Code skill (also installed for Codex)
 - Optional MCP server (`mcp/ipman_mcp.py`) for MCP-aware clients
-- Human CLI veneer: `--start`, `--close`, `--cancel`, `--defer`, `--current`, `--activate`, `--next`, plus `--dry-run` (see [`docs/v2.1-ergonomics.md`](docs/v2.1-ergonomics.md))
+- Human CLI veneer: `--start`, `--close`, `--cancel`, `--defer`, `--close-phase`, `--cancel-phase`, `--current`, `--activate`, `--next`, `--log`, plus `--dry-run` (see [`docs/v2.1-ergonomics.md`](docs/v2.1-ergonomics.md) and [`docs/v2.2-ergonomics.md`](docs/v2.2-ergonomics.md))
 - Structured closure evidence: `validations_run` and `decisions` on `task.close`, plus auto-captured git context (`commit_sha`, `dirty`, `files_changed`) when running inside a work tree
 
 Planned (no commitment yet):
@@ -480,7 +476,7 @@ Planned (no commitment yet):
 - Optional plain-SQLite mode for environments where SQLCipher is hard to install
 - Additional task relationship types (`blocks`, `informs`, …)
 
-Breaking wire changes bump `protocol_version` and ship a migration; the v1 → v2 cutover is documented in [`docs/v2-migration.md`](docs/v2-migration.md). v2.1 was purely additive over v2.0 — no wire changes, no client migration required.
+Breaking wire changes bump `protocol_version` and ship a migration; the v1 → v2 cutover is documented in [`docs/v2-migration.md`](docs/v2-migration.md). v2.1 and v2.2 were purely additive over v2.0 — no wire changes, no client migration required.
 
 ## Contributing
 

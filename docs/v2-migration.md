@@ -22,12 +22,12 @@ That is the first thing to fix.
 | Task creation parent reference | `parent_task_id` or `parent_uid` or `parent_label` | `parent_task_id` only |
 | `entity_ref` / `related_entity_ref` on events | emitted | removed |
 | `from_task_ref` / `to_task_ref` on relations | emitted | removed |
-| `code` on plan API responses | emitted | removed (input still accepted) |
+| `code` on ordinary plan API responses | emitted | removed from `plan.get`/entity reads; still used by activation context and exports |
 | `uid` on plan/phase/task API responses | emitted | removed (storage only) |
 | `plan.activate` selector | `id` or `code` | `id` or `code` (unchanged) |
 | Lookup ops (`plan.lookup`, `phase.lookup`, `task.lookup`) | available | available (the single legitimate name → id path) |
 
-`plan.export` is the deliberate exception: it still emits `code` and `uid` for archival round-trip preservation. Exports are snapshots, not API responses.
+`plan.export` is the deliberate exception: it still emits `code` and `uid` for archival round-trip preservation. `workspace.context_get` also returns the active plan `code` for human CLI display. Exports are snapshots, not ordinary entity API responses.
 
 ---
 
@@ -115,9 +115,9 @@ echo '{"protocol_version":2,"request_id":"A","actor":"agent","op":"plan.activate
 
 The same applies to `task.replace` if you were passing a parent by uid or label.
 
-### 6. Stop reading `uid`, `code`, `entity_ref`, `from_task_ref`, `to_task_ref` from responses
+### 6. Stop reading `uid`, ordinary plan `code`, `entity_ref`, `from_task_ref`, `to_task_ref` from responses
 
-These fields are no longer emitted by API responses. Parsers that hard-code them will hit `KeyError` (or equivalent). Migration:
+These fields are no longer emitted by ordinary entity API responses. Parsers that hard-code them will hit `KeyError` (or equivalent). Migration:
 
 ```diff
   // v1 plan.get response

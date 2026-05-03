@@ -190,6 +190,39 @@ static int lookup_by_label(sqlite3 *db, const kind_meta_t *m,
     return 1;
 }
 
+/* Resolve a plan's public code. Only plans have a code selector; task and
+ * phase labels stay scoped to the active plan. */
+static int lookup_plan_by_code(sqlite3 *db, const kind_meta_t *m,
+                               const char *code, long *id_out,
+                               char *err_buf, size_t err_buf_size) {
+    cJSON *p = cJSON_CreateObject();
+    if (p == NULL) {
+        set_err(err_buf, err_buf_size, "out of memory");
+        return -1;
+    }
+    cJSON_AddStringToObject(p, "code", code);
+
+    char inner_err[CLI_SELECTOR_ERR_LEN];
+    inner_err[0] = '\0';
+    cJSON *r = dispatch_op(db, m->lookup_op, p, inner_err, sizeof inner_err);
+    cJSON_Delete(p);
+    if (r == NULL) {
+        if (strstr(inner_err, "not found") != NULL) return 0;
+        set_err(err_buf, err_buf_size, "%s", inner_err);
+        return -1;
+    }
+
+    cJSON *id_j = cJSON_GetObjectItemCaseSensitive(r, "id");
+    if (!cJSON_IsNumber(id_j)) {
+        cJSON_Delete(r);
+        set_err(err_buf, err_buf_size, "plan lookup did not return an id");
+        return -1;
+    }
+    *id_out = (long)id_j->valuedouble;
+    cJSON_Delete(r);
+    return 1;
+}
+
 /* Read active_plan.id from workspace.context_get. Returns 0 on success
  * with `*plan_id_out` set, -1 if no active plan or on error. */
 static int get_active_plan_id(sqlite3 *db, long *plan_id_out,
@@ -327,6 +360,15 @@ int cli_resolve_selector(sqlite3 *db,
             *id_out   = id;
             *kind_out = m->kind;
             return 0;
+        }
+        if (m->kind == CLI_SELECTOR_KIND_PLAN) {
+            hit = lookup_plan_by_code(db, m, arg, &id, err_buf, err_buf_size);
+            if (hit < 0) return -1;
+            if (hit > 0) {
+                *id_out   = id;
+                *kind_out = m->kind;
+                return 0;
+            }
         }
     }
 

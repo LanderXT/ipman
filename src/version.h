@@ -8,9 +8,9 @@
 /*
  * Binary release version, semver-ish. Bumped per release; the protocol
  * version is independent (see protocol.c) and only changes on a wire-
- * breaking cutover. v2.1 is purely additive over the v2.0 wire — see
- * docs/v2.1-ergonomics.md.
+ * breaking cutover. v2.2 is purely additive over the v2.0/v2.1 wire — see
+ * docs/v2.2-ergonomics.md.
  */
-#define IPMAN_VERSION "2.1.0"
+#define IPMAN_VERSION "2.2.0"
 
 #endif
