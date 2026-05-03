@@ -4,7 +4,9 @@
 
 #include "export_ops.h"
 
+#include "env_var_ops.h"
 #include "json_helpers.h"
+#include "project_ops.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -480,6 +482,165 @@ int ipman_op_plan_export(const ipman_request_t *req, sqlite3 *db,
     cJSON_AddItemToObject  (export_obj, "events",    events);
     cJSON_AddItemToObject  (export_obj, "closures",  closures);
     cJSON_AddItemToObject  (export_obj, "relations", relations);
+
+    cJSON_AddItemToObject(result, "export", export_obj);
+    *result_out = result;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* workspace.export                                                   */
+/* ------------------------------------------------------------------ */
+
+static cJSON *tool_row_to_json(sqlite3_stmt *stmt) {
+    cJSON *tool = cJSON_CreateObject();
+    if (tool == NULL) return NULL;
+    cJSON_AddNumberToObject(tool, "id",
+                            (double)sqlite3_column_int64(stmt, 0));
+    ipman_json_add_text_or_null(tool, "name", sqlite3_column_text(stmt, 1));
+    ipman_json_add_text_or_null(tool, "version_constraint",
+                                sqlite3_column_text(stmt, 2));
+    ipman_json_add_text_or_null(tool, "purpose", sqlite3_column_text(stmt, 3));
+    ipman_json_add_text_or_null(tool, "install_hint",
+                                sqlite3_column_text(stmt, 4));
+    cJSON_AddBoolToObject(tool, "required",
+                          sqlite3_column_int(stmt, 5) ? 1 : 0);
+    ipman_json_add_text_or_null(tool, "author", sqlite3_column_text(stmt, 6));
+    ipman_json_add_text_or_null(tool, "created_at",
+                                sqlite3_column_text(stmt, 7));
+    ipman_json_add_text_or_null(tool, "updated_at",
+                                sqlite3_column_text(stmt, 8));
+    ipman_json_add_text_or_null(tool, "invalidated_at",
+                                sqlite3_column_text(stmt, 9));
+    ipman_json_add_text_or_null(tool, "invalidated_by",
+                                sqlite3_column_text(stmt, 10));
+    return tool;
+}
+
+/* Like collect_array but without a plan_id parameter binding — for
+ * workspace-scoped queries that select unconditionally. */
+static cJSON *collect_unbound(sqlite3 *db, const char *sql,
+                              cJSON *(*row_to_json)(sqlite3_stmt *)) {
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return NULL;
+    cJSON *array = cJSON_CreateArray();
+    if (array == NULL) {
+        sqlite3_finalize(stmt);
+        return NULL;
+    }
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        cJSON *row = row_to_json(stmt);
+        if (row == NULL) {
+            cJSON_Delete(array);
+            sqlite3_finalize(stmt);
+            return NULL;
+        }
+        cJSON_AddItemToArray(array, row);
+    }
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        cJSON_Delete(array);
+        return NULL;
+    }
+    return array;
+}
+
+/* env_vars share the v2.3 row builder in env_var_ops.c. We bind reveal=1
+ * here because an export *is* the canonical backup; the caller owns the
+ * confidentiality of the resulting bytes. */
+static cJSON *env_var_row_to_json_revealed(sqlite3_stmt *stmt) {
+    return ipman_env_var_row_to_json(stmt, /*reveal=*/1);
+}
+
+const ipman_param_desc_t ipman_op_workspace_export_params[] = {
+    { NULL },
+};
+
+int ipman_op_workspace_export(const ipman_request_t *req, sqlite3 *db,
+                              cJSON **result_out,
+                              ipman_error_code_t *err_code_out,
+                              const char **err_msg_out) {
+    (void)req;
+
+    cJSON *project = ipman_project_load(db);
+    if (project == NULL) {
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to load project";
+        return -1;
+    }
+
+    /* Column order matches the v2.3 row builders so the same row_to_json
+     * helpers can read the indices. Active and invalidated rows alike;
+     * a backup keeps history. */
+    const char *tools_sql =
+        "SELECT id, name, version_constraint, purpose, install_hint, "
+        "required, author, created_at, updated_at, invalidated_at, "
+        "invalidated_by FROM tools ORDER BY id ASC;";
+    const char *env_vars_sql =
+        "SELECT id, name, purpose, example, sensitive, required, "
+        "author, created_at, updated_at, invalidated_at, invalidated_by "
+        "FROM env_vars ORDER BY id ASC;";
+    const char *instructions_sql =
+        "SELECT id, entity_type, entity_id, instruction_type, body, author, "
+        "created_at, updated_at, invalidated_at, invalidated_by "
+        "FROM instructions WHERE entity_type = 'project' ORDER BY id ASC;";
+    const char *events_sql =
+        "SELECT id, entity_type, entity_id, event_type, actor, event_at, "
+        "summary, details, old_value, new_value, related_entity_type, "
+        "related_entity_id, request_id "
+        "FROM events WHERE entity_type = 'project' ORDER BY id ASC;";
+
+    cJSON *tools        = collect_unbound(db, tools_sql,        tool_row_to_json);
+    cJSON *env_vars     = collect_unbound(db, env_vars_sql,     env_var_row_to_json_revealed);
+    cJSON *instructions = collect_unbound(db, instructions_sql, instruction_row_to_json);
+    cJSON *events       = collect_unbound(db, events_sql,       event_row_to_json);
+
+    if (tools == NULL || env_vars == NULL || instructions == NULL ||
+        events == NULL) {
+        cJSON_Delete(project);
+        if (tools        != NULL) cJSON_Delete(tools);
+        if (env_vars     != NULL) cJSON_Delete(env_vars);
+        if (instructions != NULL) cJSON_Delete(instructions);
+        if (events       != NULL) cJSON_Delete(events);
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to assemble workspace export";
+        return -1;
+    }
+
+    int schema_version = 0;
+    if (load_schema_version(db, &schema_version) != 0) {
+        cJSON_Delete(project); cJSON_Delete(tools); cJSON_Delete(env_vars);
+        cJSON_Delete(instructions); cJSON_Delete(events);
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to read schema version";
+        return -1;
+    }
+
+    char generated_at[32];
+    format_now_utc(generated_at, sizeof generated_at);
+
+    cJSON *export_obj = cJSON_CreateObject();
+    cJSON *result     = cJSON_CreateObject();
+    if (export_obj == NULL || result == NULL) {
+        if (export_obj != NULL) cJSON_Delete(export_obj);
+        if (result     != NULL) cJSON_Delete(result);
+        cJSON_Delete(project); cJSON_Delete(tools); cJSON_Delete(env_vars);
+        cJSON_Delete(instructions); cJSON_Delete(events);
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to build workspace export envelope";
+        return -1;
+    }
+
+    cJSON_AddNumberToObject(export_obj, "export_format_version", 1);
+    cJSON_AddNumberToObject(export_obj, "schema_version",
+                            (double)schema_version);
+    cJSON_AddStringToObject(export_obj, "generated_at", generated_at);
+    cJSON_AddItemToObject  (export_obj, "project",      project);
+    cJSON_AddItemToObject  (export_obj, "tools",        tools);
+    cJSON_AddItemToObject  (export_obj, "env_vars",     env_vars);
+    cJSON_AddItemToObject  (export_obj, "instructions", instructions);
+    cJSON_AddItemToObject  (export_obj, "events",       events);
 
     cJSON_AddItemToObject(result, "export", export_obj);
     *result_out = result;

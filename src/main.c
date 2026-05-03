@@ -38,6 +38,7 @@
 #include <cJSON.h>
 
 #include <errno.h>
+#include <libgen.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -304,6 +305,82 @@ static int run_render(const char *selector) {
     return render_rc != 0 ? 1 : 0;
 }
 
+/*
+ * On first init, the project row is seeded with name='unnamed' by migration
+ * 0004. We can do better than that: the parent directory of IPMAN_HOME
+ * almost always *is* the repo, so its basename is the natural project name.
+ *
+ * Behavior:
+ *   - Resolves IPMAN_HOME to an absolute path with realpath().
+ *   - Takes the basename of the parent directory (e.g. for ".ipman" inside
+ *     a repo named "myapp", the parent is "myapp").
+ *   - Updates the row only if name is still the literal default 'unnamed';
+ *     never overwrites a user-supplied name.
+ *
+ * Failures here are non-fatal (we silently leave the default in place);
+ * this is best-effort ergonomics, not a correctness requirement.
+ */
+static void auto_name_project_if_default(sqlite3 *db, const char *home) {
+    /* Build an absolute path for `home` without relying on realpath() —
+     * which is only declared under feature-test macros our build does
+     * not enable. For relative paths, prepend cwd; for absolute paths
+     * use as-is. We do not need symlink resolution here. */
+    char abs[PATH_MAX];
+    if (home[0] == '/') {
+        int n = snprintf(abs, sizeof abs, "%s", home);
+        if (n < 0 || (size_t)n >= sizeof abs) return;
+    } else {
+        char cwd[PATH_MAX];
+        if (getcwd(cwd, sizeof cwd) == NULL) return;
+        int n = snprintf(abs, sizeof abs, "%s/%s", cwd, home);
+        if (n < 0 || (size_t)n >= sizeof abs) return;
+    }
+
+    /* dirname() and basename() may mutate their input; always use copies.
+     *
+     * Heuristic: if the home directory itself is `.ipman` (the default
+     * convention from ipman_home.c — the workspace lives inside the repo),
+     * the project name comes from the *parent* directory's basename. Any
+     * other path means IPMAN_HOME was set explicitly, so we treat the
+     * home directory itself as the project root and use its own basename. */
+    char buf_for_base[PATH_MAX];
+    int n = snprintf(buf_for_base, sizeof buf_for_base, "%s", abs);
+    if (n < 0 || (size_t)n >= sizeof buf_for_base) return;
+    char *home_basename = basename(buf_for_base);
+    if (home_basename == NULL) return;
+
+    char *base;
+    char buf_for_parent[PATH_MAX];
+    char buf_for_parent_base[PATH_MAX];
+    if (strcmp(home_basename, ".ipman") == 0) {
+        n = snprintf(buf_for_parent, sizeof buf_for_parent, "%s", abs);
+        if (n < 0 || (size_t)n >= sizeof buf_for_parent) return;
+        char *parent = dirname(buf_for_parent);
+        if (parent == NULL) return;
+        n = snprintf(buf_for_parent_base, sizeof buf_for_parent_base,
+                     "%s", parent);
+        if (n < 0 || (size_t)n >= sizeof buf_for_parent_base) return;
+        base = basename(buf_for_parent_base);
+    } else {
+        base = home_basename;
+    }
+    if (base == NULL || *base == '\0' ||
+        strcmp(base, "/") == 0 || strcmp(base, ".") == 0) {
+        return;
+    }
+
+    const char *sql =
+        "UPDATE project SET "
+        "name = ?, "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+        "WHERE id = 1 AND name = 'unnamed';";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return;
+    sqlite3_bind_text(stmt, 1, base, -1, SQLITE_TRANSIENT);
+    (void)sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+}
+
 static int run_init(void) {
     char home[PATH_MAX];
     char dbpath[PATH_MAX];
@@ -312,6 +389,10 @@ static int run_init(void) {
     int rc = open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath,
                             1, &schema_version);
     if (rc != 0) return rc;
+
+    /* Populate the project row with the repo's directory basename when the
+     * row is still its 'unnamed' default. Cheap ergonomics for first init. */
+    auto_name_project_if_default(db, home);
 
     /* Best-effort: make the workspace-local skill discoverable for Claude
      * Code and Codex when the corresponding global install is absent. Failure
@@ -1638,17 +1719,101 @@ static void next_print_cursor(FILE *out, const char *kind,
     cli_table_free(&t);
 }
 
-/* Section renderer for --next: plan banner + per-cursor Field/Value tables,
- * a unified instructions table with a Scope column, and an Up next table
- * matching --ls. Helper kept separate from run_next so the data-fetch
- * pipeline above is not entangled with rendering choices. */
-static void next_render(const cJSON *plan_obj,
+/* Project block renderer for --next. Skips empty subsections so the
+ * banner stays compact for fresh workspaces. */
+static void next_print_project(FILE *out, const cJSON *project) {
+    if (!cJSON_IsObject(project)) return;
+    const cJSON *name = cJSON_GetObjectItemCaseSensitive(project, "name");
+    const cJSON *desc = cJSON_GetObjectItemCaseSensitive(project, "description");
+    fprintf(out, "Project: %s\n",
+            (name && cJSON_IsString(name)) ? name->valuestring : "?");
+    if (desc && cJSON_IsString(desc) && desc->valuestring[0] != '\0') {
+        fprintf(out, "Description: %s\n", desc->valuestring);
+    }
+
+    const cJSON *tools = cJSON_GetObjectItemCaseSensitive(project, "tools");
+    if (cJSON_IsArray(tools) && cJSON_GetArraySize(tools) > 0) {
+        fputs("\nTools\n", out);
+        cli_table_t tt;
+        const char *thdr[] = {"Name", "Version", "Required", "Purpose"};
+        cli_table_init(&tt, 4, thdr);
+        const cJSON *t;
+        cJSON_ArrayForEach(t, tools) {
+            const cJSON *tn = cJSON_GetObjectItemCaseSensitive(t, "name");
+            const cJSON *tv = cJSON_GetObjectItemCaseSensitive(t, "version_constraint");
+            const cJSON *tr = cJSON_GetObjectItemCaseSensitive(t, "required");
+            const cJSON *tp = cJSON_GetObjectItemCaseSensitive(t, "purpose");
+            const char *row[] = {
+                (tn && cJSON_IsString(tn)) ? tn->valuestring : "",
+                (tv && cJSON_IsString(tv)) ? tv->valuestring : "",
+                cJSON_IsTrue(tr) ? "yes" : "no",
+                (tp && cJSON_IsString(tp)) ? tp->valuestring : "",
+            };
+            cli_table_add_row(&tt, row);
+        }
+        cli_table_print(&tt, out);
+        cli_table_free(&tt);
+    }
+
+    const cJSON *envs = cJSON_GetObjectItemCaseSensitive(project, "env_vars");
+    if (cJSON_IsArray(envs) && cJSON_GetArraySize(envs) > 0) {
+        fputs("\nEnv vars\n", out);
+        cli_table_t et;
+        const char *ehdr[] = {"Name", "Required", "Sensitive", "Purpose"};
+        cli_table_init(&et, 4, ehdr);
+        const cJSON *e;
+        cJSON_ArrayForEach(e, envs) {
+            const cJSON *en = cJSON_GetObjectItemCaseSensitive(e, "name");
+            const cJSON *er = cJSON_GetObjectItemCaseSensitive(e, "required");
+            const cJSON *es = cJSON_GetObjectItemCaseSensitive(e, "sensitive");
+            const cJSON *ep = cJSON_GetObjectItemCaseSensitive(e, "purpose");
+            const char *row[] = {
+                (en && cJSON_IsString(en)) ? en->valuestring : "",
+                cJSON_IsTrue(er) ? "yes" : "no",
+                cJSON_IsTrue(es) ? "yes" : "no",
+                (ep && cJSON_IsString(ep)) ? ep->valuestring : "",
+            };
+            cli_table_add_row(&et, row);
+        }
+        cli_table_print(&et, out);
+        cli_table_free(&et);
+    }
+
+    const cJSON *pi = cJSON_GetObjectItemCaseSensitive(project, "instructions");
+    if (cJSON_IsArray(pi) && cJSON_GetArraySize(pi) > 0) {
+        fputs("\nProject instructions\n", out);
+        cli_table_t pt;
+        const char *phdr[] = {"Type", "Body"};
+        cli_table_init(&pt, 2, phdr);
+        const cJSON *e;
+        cJSON_ArrayForEach(e, pi) {
+            const cJSON *body  = cJSON_GetObjectItemCaseSensitive(e, "body");
+            const cJSON *itype = cJSON_GetObjectItemCaseSensitive(e, "instruction_type");
+            const char *row[] = {
+                (itype && cJSON_IsString(itype)) ? itype->valuestring : "",
+                (body  && cJSON_IsString(body))  ? body->valuestring  : "",
+            };
+            cli_table_add_row(&pt, row);
+        }
+        cli_table_print(&pt, out);
+        cli_table_free(&pt);
+    }
+}
+
+/* Section renderer for --next: project banner + per-cursor Field/Value
+ * tables, a unified instructions table with a Scope column, and an Up
+ * next table matching --ls. Helper kept separate from run_next so the
+ * data-fetch pipeline above is not entangled with rendering choices. */
+static void next_render(const cJSON *project,
+                        const cJSON *plan_obj,
                         const cJSON *phase_obj,
                         const cJSON *task_obj,
                         const cJSON *plan_instr,
                         const cJSON *phase_instr,
                         const cJSON *task_instr,
                         const cJSON *pending) {
+    next_print_project(stdout, project);
+    fputc('\n', stdout);
     next_print_cursor(stdout, "Plan",  /*priority=*/1, plan_obj);
     next_print_cursor(stdout, "Phase", /*priority=*/0, phase_obj);
     next_print_cursor(stdout, "Task",  /*priority=*/1, task_obj);
@@ -1725,9 +1890,15 @@ static int run_next(void) {
     long plan_id  = (cJSON_IsNumber(ap_id))  ? (long)ap_id->valuedouble  : 0;
     long phase_id = (cJSON_IsNumber(cph_id)) ? (long)cph_id->valuedouble : 0;
     long task_id  = (cJSON_IsNumber(ctk_id)) ? (long)ctk_id->valuedouble : 0;
+    cJSON *project = context ? cJSON_DetachItemFromObjectCaseSensitive(context, "project") : NULL;
     cJSON_Delete(ctx);
 
     if (plan_id <= 0) {
+        /* No active plan, but the project block is still useful: tools,
+         * env_vars, and project-scoped instructions reach the agent
+         * regardless of cursor state. Render it and surface a hint. */
+        next_print_project(stdout, project);
+        if (project) cJSON_Delete(project);
         fprintf(stderr,
                 "ipman next: no active plan — run `ipman --activate <plan>` first\n");
         ipman_db_close(db);
@@ -1802,10 +1973,11 @@ static int run_next(void) {
         cJSON_Delete(p);
     }
 
-    next_render(plan_obj, phase_obj, task_obj,
+    next_render(project, plan_obj, phase_obj, task_obj,
                 plan_instr, phase_instr, task_instr,
                 pending);
 
+    if (project)     cJSON_Delete(project);
     if (plan_obj)    cJSON_Delete(plan_obj);
     if (phase_obj)   cJSON_Delete(phase_obj);
     if (task_obj)    cJSON_Delete(task_obj);

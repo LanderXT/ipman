@@ -47,14 +47,16 @@ done
 
 # --- project.get / update / history ----------------------------------------
 
-# init seeded the row with name='unnamed' and no description.
+# init seeded the project row. v2.3.2's auto-naming may have set the name
+# from IPMAN_HOME's path heuristically; the row exists either way and has
+# no description until the user sets one.
 init_project=$(call_ipman '{"protocol_version":2,"request_id":"p1","actor":"test","op":"project.get","params":{}}')
 expect_ok "$init_project"
 printf '%s' "$init_project" | jq -e '
   .result.project.id == 1
-  and .result.project.name == "unnamed"
+  and (.result.project.name | type) == "string"
+  and (.result.project.name | length) > 0
   and .result.project.description == null
-  and .result.project.updated_at == null
 ' >/dev/null
 
 # project.update sets name and description, emits project_updated event.

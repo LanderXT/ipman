@@ -45,4 +45,37 @@ int ipman_op_plan_export(const ipman_request_t *req, sqlite3 *db,
                         const char **err_msg_out);
 extern const ipman_param_desc_t ipman_op_plan_export_params[];
 
+/*
+ * workspace.export — read-only canonical snapshot of the workspace-level
+ * registry: the project metadata, the tools and env_vars (active and
+ * invalidated), the project-scoped instructions, and the audit events
+ * with entity_type='project'. plan.export covers per-plan data;
+ * workspace.export covers everything else, so together they cover the DB.
+ *
+ * Inputs:
+ *   none.
+ *
+ * Output (result.export):
+ *   {
+ *     "export_format_version": 1,
+ *     "schema_version":        <int>,
+ *     "generated_at":          "<ISO-8601 UTC>",
+ *     "project":      { id: 1, name, description, ... },
+ *     "tools":        [ ... including invalidated, id asc ],
+ *     "env_vars":     [ ... including invalidated, examples revealed, id asc ],
+ *     "instructions": [ ... entity_type='project' only, id asc ],
+ *     "events":       [ ... entity_type='project' only, id asc ]
+ *   }
+ *
+ * env_var examples are emitted unmasked: an export is a backup, the
+ * caller is responsible for keeping the resulting JSON private.
+ *
+ * Emits no events. Touches no state.
+ */
+int ipman_op_workspace_export(const ipman_request_t *req, sqlite3 *db,
+                              cJSON **result_out,
+                              ipman_error_code_t *err_code_out,
+                              const char **err_msg_out);
+extern const ipman_param_desc_t ipman_op_workspace_export_params[];
+
 #endif

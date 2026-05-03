@@ -119,6 +119,7 @@ static const ipman_op_t k_ops[] = {
     { "tool.list",                    ipman_op_tool_list,                       ipman_op_tool_list_params },
     { "tool.update",                  ipman_op_tool_update,                     ipman_op_tool_update_params },
     { "workspace.context_get",        ipman_op_workspace_context_get,           ipman_op_workspace_context_get_params },
+    { "workspace.export",             ipman_op_workspace_export,                ipman_op_workspace_export_params },
     { "workspace.refresh_agent_docs", ipman_op_workspace_refresh_agent_docs,    ipman_op_workspace_refresh_agent_docs_params },
 };
 
