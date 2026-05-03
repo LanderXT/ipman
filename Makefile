@@ -147,6 +147,7 @@ CLI_SELECTOR_TEST_OBJS := \
     $(BUILD_DIR)/context_ops.o \
     $(BUILD_DIR)/db.o \
     $(BUILD_DIR)/dispatch.o \
+    $(BUILD_DIR)/env_var_ops.o \
     $(BUILD_DIR)/event_ops.o \
     $(BUILD_DIR)/export_ops.o \
     $(BUILD_DIR)/instruction_ops.o \
@@ -157,8 +158,10 @@ CLI_SELECTOR_TEST_OBJS := \
     $(BUILD_DIR)/migrations.o \
     $(BUILD_DIR)/phase_ops.o \
     $(BUILD_DIR)/plan_ops.o \
+    $(BUILD_DIR)/project_ops.o \
     $(BUILD_DIR)/protocol.o \
     $(BUILD_DIR)/task_ops.o \
+    $(BUILD_DIR)/tool_ops.o \
     $(BUILD_DIR)/validation.o \
     $(GEN_OBJ) \
     $(BUILD_DIR)/third_party/cjson/cJSON.o

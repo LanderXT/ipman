@@ -1,6 +1,6 @@
 ---
 name: ipman
-description: "Use this skill when you need to read or update plans, phases, tasks, comments, or workspace context via the `ipman` CLI from Codex, Claude Code, or another agent session. Trigger when: the user asks about the current plan, wants to create or update a task or phase, asks for workspace context, asks what's in progress, or any operation involving plan.*, phase.*, task.*, comment.*, event.list, or workspace.context_get."
+description: "Use this skill when you need to read or update plans, phases, tasks, comments, instructions, project metadata, tools, env_vars, or workspace context via the `ipman` CLI from Codex, Claude Code, or another agent session. Trigger when: the user asks about the current plan, wants to create or update a task or phase, asks for workspace context, asks what's in progress, asks what the project does or what tools / env vars it requires, or any operation involving plan.*, phase.*, task.*, comment.*, instruction.*, project.*, tool.*, env_var.*, event.list, or workspace.context_get."
 version: 1.0.0
 ---
 

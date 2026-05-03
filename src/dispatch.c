@@ -9,10 +9,13 @@
 #include "plan_ops.h"
 #include "comment_ops.h"
 #include "context_ops.h"
+#include "env_var_ops.h"
 #include "event_ops.h"
 #include "export_ops.h"
 #include "instruction_ops.h"
+#include "project_ops.h"
 #include "task_ops.h"
+#include "tool_ops.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -47,6 +50,10 @@ static const ipman_op_t k_ops[] = {
     { "comment.invalidate",           ipman_op_comment_invalidate,              ipman_op_comment_invalidate_params },
     { "comment.list",                 ipman_op_comment_list,                    ipman_op_comment_list_params },
     { "comment.update",               ipman_op_comment_update,                  ipman_op_comment_update_params },
+    { "env_var.add",                  ipman_op_env_var_add,                     ipman_op_env_var_add_params },
+    { "env_var.invalidate",           ipman_op_env_var_invalidate,              ipman_op_env_var_invalidate_params },
+    { "env_var.list",                 ipman_op_env_var_list,                    ipman_op_env_var_list_params },
+    { "env_var.update",               ipman_op_env_var_update,                  ipman_op_env_var_update_params },
     { "event.list",                   ipman_op_event_list,                      ipman_op_event_list_params },
     { "instruction.add",              ipman_op_instruction_add,                 ipman_op_instruction_add_params },
     { "instruction.invalidate",       ipman_op_instruction_invalidate,          ipman_op_instruction_invalidate_params },
@@ -80,6 +87,9 @@ static const ipman_op_t k_ops[] = {
     { "plan.progress",                ipman_op_plan_progress,                   ipman_op_plan_progress_params },
     { "plan.reopen",                  ipman_op_plan_reopen,                     ipman_op_plan_reopen_params },
     { "plan.update",                  ipman_op_plan_update,                     ipman_op_plan_update_params },
+    { "project.get",                  ipman_op_project_get,                     ipman_op_project_get_params },
+    { "project.history",              ipman_op_project_history,                 ipman_op_project_history_params },
+    { "project.update",               ipman_op_project_update,                  ipman_op_project_update_params },
     { "task.assign",                  ipman_op_task_assign,                     ipman_op_task_assign_params },
     { "task.cancel",                  ipman_op_task_cancel,                     ipman_op_task_cancel_params },
     { "task.clear_current",           ipman_op_task_clear_current,              ipman_op_task_clear_current_params },
@@ -104,6 +114,10 @@ static const ipman_op_t k_ops[] = {
     { "task.unassign",                ipman_op_task_unassign,                   ipman_op_task_unassign_params },
     { "task.unlink_dependency",       ipman_op_task_unlink_dependency,          ipman_op_task_unlink_dependency_params },
     { "task.update",                  ipman_op_task_update,                     ipman_op_task_update_params },
+    { "tool.add",                     ipman_op_tool_add,                        ipman_op_tool_add_params },
+    { "tool.invalidate",              ipman_op_tool_invalidate,                 ipman_op_tool_invalidate_params },
+    { "tool.list",                    ipman_op_tool_list,                       ipman_op_tool_list_params },
+    { "tool.update",                  ipman_op_tool_update,                     ipman_op_tool_update_params },
     { "workspace.context_get",        ipman_op_workspace_context_get,           ipman_op_workspace_context_get_params },
     { "workspace.refresh_agent_docs", ipman_op_workspace_refresh_agent_docs,    ipman_op_workspace_refresh_agent_docs_params },
 };
