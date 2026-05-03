@@ -44,7 +44,8 @@ static void bind_optional_text(sqlite3_stmt *stmt, int index, const char *value)
 static int is_entity_type(const char *value) {
     return strcmp(value, "plan") == 0 ||
            strcmp(value, "phase") == 0 ||
-           strcmp(value, "task") == 0;
+           strcmp(value, "task") == 0 ||
+           strcmp(value, "project") == 0;
 }
 
 static int read_required_string(cJSON *params, const char *field,
@@ -110,7 +111,15 @@ static int read_entity_ref(cJSON *params, const char **entity_type_out,
     }
     if (!is_entity_type(entity_type)) {
         *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
-        *err_msg_out = "entity_type must be plan, phase, or task";
+        *err_msg_out = "entity_type must be plan, phase, task, or project";
+        return -1;
+    }
+    /* The project table is single-row by construction (CHECK id = 1).
+     * Reject any entity_id != 1 up front so callers get a precise error
+     * instead of a generic not_found. */
+    if (strcmp(entity_type, "project") == 0 && *entity_id_out != 1) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "entity_id must be 1 when entity_type is 'project'";
         return -1;
     }
     *entity_type_out = entity_type;
@@ -121,6 +130,7 @@ static const char *entity_table(const char *entity_type) {
     if (strcmp(entity_type, "plan") == 0) return "plans";
     if (strcmp(entity_type, "phase") == 0) return "phases";
     if (strcmp(entity_type, "task") == 0) return "tasks";
+    if (strcmp(entity_type, "project") == 0) return "project";
     return NULL;
 }
 
@@ -133,8 +143,10 @@ static int entity_exists(sqlite3 *db, const char *entity_type,
         sql = "SELECT 1 FROM plans WHERE id = ?;";
     } else if (strcmp(table, "phases") == 0) {
         sql = "SELECT 1 FROM phases WHERE id = ?;";
-    } else {
+    } else if (strcmp(table, "tasks") == 0) {
         sql = "SELECT 1 FROM tasks WHERE id = ?;";
+    } else {
+        sql = "SELECT 1 FROM project WHERE id = ?;";
     }
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);

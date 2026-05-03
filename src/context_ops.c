@@ -340,6 +340,55 @@ static cJSON *load_active_tools(sqlite3 *db) {
     return array;
 }
 
+static cJSON *load_active_project_instructions(sqlite3 *db) {
+    /* Project-scoped instructions are durable repository-wide standing
+     * guidance. Surfaced in context.project so they reach the agent at
+     * session start regardless of whether a plan is active. */
+    const char *sql =
+        "SELECT id, entity_type, entity_id, instruction_type, body, author, "
+        "created_at, updated_at, invalidated_at, invalidated_by "
+        "FROM instructions "
+        "WHERE entity_type = 'project' AND invalidated_at IS NULL "
+        "ORDER BY id ASC;";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return NULL;
+    cJSON *array = cJSON_CreateArray();
+    if (array == NULL) {
+        sqlite3_finalize(stmt);
+        return NULL;
+    }
+    int rc;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        cJSON *row = cJSON_CreateObject();
+        if (row == NULL) {
+            cJSON_Delete(array);
+            sqlite3_finalize(stmt);
+            return NULL;
+        }
+        cJSON_AddNumberToObject(row, "id",
+                                (double)sqlite3_column_int64(stmt, 0));
+        ipman_json_add_text_or_null(row, "entity_type",
+                                    sqlite3_column_text(stmt, 1));
+        cJSON_AddNumberToObject(row, "entity_id",
+                                (double)sqlite3_column_int64(stmt, 2));
+        ipman_json_add_text_or_null(row, "instruction_type",
+                                    sqlite3_column_text(stmt, 3));
+        ipman_json_add_text_or_null(row, "body", sqlite3_column_text(stmt, 4));
+        ipman_json_add_text_or_null(row, "author", sqlite3_column_text(stmt, 5));
+        ipman_json_add_text_or_null(row, "created_at",
+                                    sqlite3_column_text(stmt, 6));
+        ipman_json_add_text_or_null(row, "updated_at",
+                                    sqlite3_column_text(stmt, 7));
+        cJSON_AddItemToArray(array, row);
+    }
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        cJSON_Delete(array);
+        return NULL;
+    }
+    return array;
+}
+
 static cJSON *load_active_env_vars(sqlite3 *db, int reveal) {
     const char *sql =
         "SELECT id, name, purpose, example, sensitive, required, "
@@ -469,21 +518,26 @@ static cJSON *load_context_with_requirements(sqlite3 *db, int reveal_env) {
     if (task == NULL) cJSON_AddNullToObject(context, "current_task");
     else cJSON_AddItemToObject(context, "current_task", task);
 
-    /* Project block: workspace-level metadata + the tools and env_vars
-     * the project requires. Always present (single-row table guarantees
-     * the project row exists from the moment migration 0004 runs). */
+    /* Project block: workspace-level metadata, the tools and env_vars
+     * the project requires, and any project-scoped standing
+     * instructions. Always present (single-row table guarantees the
+     * project row exists from the moment migration 0004 runs). */
     cJSON *project = ipman_project_load(db);
     cJSON *tools = load_active_tools(db);
     cJSON *env_vars = load_active_env_vars(db, reveal_env);
-    if (project == NULL || tools == NULL || env_vars == NULL) {
+    cJSON *project_instructions = load_active_project_instructions(db);
+    if (project == NULL || tools == NULL || env_vars == NULL ||
+        project_instructions == NULL) {
         if (project != NULL) cJSON_Delete(project);
         if (tools != NULL) cJSON_Delete(tools);
         if (env_vars != NULL) cJSON_Delete(env_vars);
+        if (project_instructions != NULL) cJSON_Delete(project_instructions);
         cJSON_Delete(context);
         return NULL;
     }
     cJSON_AddItemToObject(project, "tools", tools);
     cJSON_AddItemToObject(project, "env_vars", env_vars);
+    cJSON_AddItemToObject(project, "instructions", project_instructions);
     cJSON_AddItemToObject(context, "project", project);
     return context;
 }
