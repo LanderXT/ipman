@@ -97,11 +97,8 @@ static void case_invalid_utf8_no_crash(void) {
     char buf[256];
     /* \x80 is a lone continuation byte */
     ipman_slugify("a\x80z", buf, sizeof(buf));
-    /* must not crash; result is some slug containing 'a' and 'z' */
-    if (buf[0] == '\0' && buf[1] == '\0') {
-        /* at minimum shouldn't be empty when we have 'a' and 'z' */
-    }
-    (void)buf; /* no crash is the primary assertion */
+    /* \x80 is a lone continuation byte -> '-', collapsed: "a-z" */
+    ASSERT_STR_EQ(buf, "a-z");
 }
 
 static void case_invalid_utf8_dash_substitution(void) {

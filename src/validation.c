@@ -178,7 +178,7 @@ static int ipman_utf8_decode_next(const unsigned char *s, size_t len,
  *
  * References: Unicode NamesList, common slug-generation conventions.
  */
-static const char * const ipman_latin_translit[288] = {
+static const char * const ipman_latin_translit[192] = {
     /* U+00C0 */ "a",   /* À  LATIN CAPITAL LETTER A WITH GRAVE */
     /* U+00C1 */ "a",   /* Á  LATIN CAPITAL LETTER A WITH ACUTE */
     /* U+00C2 */ "a",   /* Â  LATIN CAPITAL LETTER A WITH CIRCUMFLEX */
