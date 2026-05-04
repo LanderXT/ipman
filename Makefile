@@ -176,6 +176,14 @@ $(BUILD_DIR)/tests/test_log: tests/unit/test_log.c $(BUILD_DIR)/log.o
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -Isrc -o $@ $^
 
+# test_slugify links validation.o and its transitive dep (cJSON is pulled in
+# by validation.h via protocol.h -> cJSON.h).
+$(BUILD_DIR)/tests/test_slugify: tests/unit/test_slugify.c \
+		$(BUILD_DIR)/validation.o \
+		$(BUILD_DIR)/third_party/cjson/cJSON.o
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(SQLCIPHER_CFLAGS) $(SODIUM_CFLAGS) -Ithird_party/cjson -Isrc -o $@ $^
+
 unit: $(UNIT_BIN)
 	@set -e; for t in $(UNIT_BIN); do \
 		echo "--- $$t ---"; \
