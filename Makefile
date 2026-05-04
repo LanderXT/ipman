@@ -177,7 +177,9 @@ $(BUILD_DIR)/tests/test_log: tests/unit/test_log.c $(BUILD_DIR)/log.o
 	$(CC) $(CFLAGS) -Isrc -o $@ $^
 
 # test_slugify links validation.o and its transitive dep (cJSON is pulled in
-# by validation.h via protocol.h -> cJSON.h).
+# by validation.h via protocol.h -> cJSON.h). $(SQLCIPHER_CFLAGS) and
+# $(SODIUM_CFLAGS) are needed because validation.h includes <sqlite3.h>; if
+# that include is ever removed, these flags can go too.
 $(BUILD_DIR)/tests/test_slugify: tests/unit/test_slugify.c \
 		$(BUILD_DIR)/validation.o \
 		$(BUILD_DIR)/third_party/cjson/cJSON.o

@@ -169,7 +169,7 @@ static int ipman_utf8_decode_next(const unsigned char *s, size_t len,
 
 /*
  * Latin-1 Supplement (U+00C0..U+00FF) and Latin Extended-A (U+0100..U+017F).
- * 288 entries, indexed by (cp - 0x00C0).
+ * 192 entries, indexed by (cp - 0x00C0).
  * Each entry is a NUL-terminated string of 1-2 ASCII lowercase chars,
  * or NULL meaning "no mapping → emit dash (collapsed)".
  *
@@ -479,14 +479,13 @@ void ipman_slugify(const char *title, char *out_slug, size_t max_len) {
                 }
             }
         } else {
-            /* Non-ASCII: try transliteration */
+            /* Non-ASCII: try transliteration. Invariant: every entry in
+             * ipman_latin_translit is a non-empty ASCII [a-z]+ string. */
             const char *mapped = ipman_translit_lookup(cp);
             if (mapped != NULL) {
-                /* Append each lowercase char of the mapping */
                 for (size_t k = 0; mapped[k] != '\0'; ++k) {
-                    char mc = ipman_tolower(mapped[k]);
-                    if (ipman_is_alnum(mc) && out_pos < max_len - 1) {
-                        out_slug[out_pos++] = mc;
+                    if (out_pos < max_len - 1) {
+                        out_slug[out_pos++] = mapped[k];
                         last_was_dash = 0;
                     }
                 }

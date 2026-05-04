@@ -56,4 +56,22 @@ printf '%s' "$task" | jq -e '
   .result.task.label == "cafe-reserve"
 ' >/dev/null
 
+# --- task.create with Polish title (Latin Extended-A) ------------------------
+# Exercises U+0142 (ł) and U+017A (ź) — the Latin Extended-A range.
+
+task2=$(call_ipman "{\"protocol_version\":2,\"request_id\":\"t2\",\"actor\":\"hleal\",\"op\":\"task.create\",\"params\":{\"plan_id\":$plan_id,\"phase_id\":$phase_id,\"title\":\"Łódź relay\",\"summary\":\"Polish diacritic test\"}}")
+expect_ok "$task2"
+printf '%s' "$task2" | jq -e '
+  .result.task.label == "lodz-relay"
+' >/dev/null
+
+# --- task.create with German ß title -----------------------------------------
+# Exercises a multi-char mapping (ß -> ss).
+
+task3=$(call_ipman "{\"protocol_version\":2,\"request_id\":\"t3\",\"actor\":\"hleal\",\"op\":\"task.create\",\"params\":{\"plan_id\":$plan_id,\"phase_id\":$phase_id,\"title\":\"Weißbier zählen\",\"summary\":\"German sharp-s test\"}}")
+expect_ok "$task3"
+printf '%s' "$task3" | jq -e '
+  .result.task.label == "weissbier-zahlen"
+' >/dev/null
+
 echo "ok 230_slugify_diacritics"
