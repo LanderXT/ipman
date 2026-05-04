@@ -21,6 +21,7 @@
 #include "db.h"
 #include "agent_docs.h"
 #include "dispatch.h"
+#include "import_ops.h"
 #include "io.h"
 #include "log.h"
 #include "migrate_ops.h"
@@ -418,6 +419,49 @@ static int run_export(int argc, char **argv) {
     return 0;
 }
 
+/* Parse `ipman import-plan <file.json>` argv (argv[1] is already known to be
+ * the import-plan verb). The sole positional argument is the JSON file path. */
+static int run_import_plan(int argc, char **argv) {
+    const char *json_path = NULL;
+    for (int i = 2; i < argc; ++i) {
+        if (argv[i][0] == '-') {
+            fprintf(stderr, "ipman import-plan: unknown flag: %s\n", argv[i]);
+            return 1;
+        } else if (json_path == NULL) {
+            json_path = argv[i];
+        } else {
+            fprintf(stderr, "ipman import-plan: unexpected extra argument: %s\n",
+                    argv[i]);
+            return 1;
+        }
+    }
+    if (json_path == NULL) {
+        fprintf(stderr, "usage: ipman import-plan <export.json>\n");
+        return 1;
+    }
+
+    char home[PATH_MAX], dbpath[PATH_MAX];
+    sqlite3 *db = NULL;
+    int ws_rc = open_workspace(&db, home, sizeof home, dbpath, sizeof dbpath,
+                               0, NULL);
+    if (ws_rc != 0) return ws_rc;
+
+    sqlite3_int64 new_plan_id = 0;
+    char *err_msg = NULL;
+    int rc = ipman_import_plan_envelope(db, json_path, &new_plan_id, &err_msg);
+    ipman_db_close(db);
+
+    if (rc != 0) {
+        fprintf(stderr, "ipman import-plan: %s\n",
+                err_msg ? err_msg : "import failed");
+        free(err_msg);
+        return 1;
+    }
+    free(err_msg);
+    fprintf(stdout, "imported plan %lld\n", (long long)new_plan_id);
+    return 0;
+}
+
 /* Developer / test escape-hatch: open the workspace through the standard
  * keyed open and run ad-hoc SQL. Output format mirrors `sqlite3` defaults
  * (one row per line, '|' between columns) so this drops in for tests that
@@ -463,6 +507,7 @@ static const char *parse_command(const char *arg) {
     if (strcmp(arg, "migrate-encrypt") == 0 || strcmp(arg, "--migrate-encrypt") == 0) return "migrate-encrypt";
     if (strcmp(arg, "export") == 0 || strcmp(arg, "--export") == 0) return "export";
     if (strcmp(arg, "sql") == 0 || strcmp(arg, "--sql") == 0) return "sql";
+    if (strcmp(arg, "import-plan") == 0 || strcmp(arg, "--import-plan") == 0) return "import-plan";
     if (strcmp(arg, "render")   == 0 || strcmp(arg, "-R")  == 0 || strcmp(arg, "--render")  == 0) return "render";
     if (strcmp(arg, "status")   == 0 || strcmp(arg, "-S")  == 0 || strcmp(arg, "--status")  == 0) return "status";
     if (strcmp(arg, "ls")       == 0 || strcmp(arg, "-L")  == 0 || strcmp(arg, "--ls")      == 0) return "ls";
@@ -2077,8 +2122,9 @@ int main(int argc, char **argv) {
     if (cmd != NULL && strcmp(cmd, "version") == 0) { fprintf(stdout, "ipman %s\n", IPMAN_VERSION); return 0; }
     if (cmd != NULL && strcmp(cmd, "init")   == 0) { return run_init(); }
     if (cmd != NULL && strcmp(cmd, "migrate-encrypt") == 0) { return run_migrate_encrypt(); }
-    if (cmd != NULL && strcmp(cmd, "export") == 0) { return run_export(argc, argv); }
-    if (cmd != NULL && strcmp(cmd, "sql")    == 0) { return run_sql_cmd(argc, argv); }
+    if (cmd != NULL && strcmp(cmd, "export")      == 0) { return run_export(argc, argv); }
+    if (cmd != NULL && strcmp(cmd, "import-plan") == 0) { return run_import_plan(argc, argv); }
+    if (cmd != NULL && strcmp(cmd, "sql")         == 0) { return run_sql_cmd(argc, argv); }
     if (cmd != NULL && strcmp(cmd, "status") == 0) { return run_status(); }
     if (cmd != NULL && strcmp(cmd, "ls")     == 0) { return run_ls(); }
     if (cmd != NULL && strcmp(cmd, "log")    == 0) { return run_log(argc, argv); }

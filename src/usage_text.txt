@@ -67,6 +67,8 @@ Admin (outside the op model):
   export --plaintext --i-understand <out.db>
                               Emergency dump: write a plaintext SQLite copy
                               of the encrypted DB to <out.db>
+  --import-plan <export.json> Import a plan.export envelope as a new plan
+                              (fresh IDs; all entities as todo/open)
   sql "SQL..."                Run ad-hoc SQL (developer / test escape-hatch)
 
 Agent protocol (canonical JSON in / JSON out):

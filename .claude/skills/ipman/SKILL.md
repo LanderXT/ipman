@@ -200,6 +200,34 @@ echo '{"protocol_version":2,"request_id":"r9","actor":"agent","op":"plan.export"
 echo '{"protocol_version":2,"request_id":"r10","actor":"agent","op":"plan.close","params":{"id":1,"outcome":"completed","outcome_summary":"All phases delivered","closing_comment":"Approved by stakeholder"}}' | ipman
 ```
 
+### Import a plan from an export envelope
+
+Copy a plan tree from another workspace (or restore a snapshot) using the
+`--import-plan` shortcut. The import assigns fresh IDs, re-maps all internal
+cross-references, and creates every entity in its creation-default state
+(`open`/`todo`). Events, closures, and project-scoped instructions are not
+imported.
+
+```sh
+# 1. In the source workspace, export the plan to a JSON file
+ipman --next                         # identify the plan id (e.g. 3)
+echo '{"protocol_version":2,"request_id":"e1","actor":"agent","op":"plan.export","params":{"plan_id":3}}' \
+    | ipman | jq '.result.export' > plan-snapshot.json
+
+# 2. In the destination workspace
+ipman init                           # if not yet initialised
+ipman --import-plan plan-snapshot.json
+# → "imported plan <new-id>"
+
+# 3. Activate the imported plan
+ipman --activate <new-id>
+ipman --next                         # confirm tree is intact
+```
+
+The import is atomic at the plan/phase/task level: if any `*.create` op fails,
+a saga rollback cancels everything created so far and the workspace is left
+clean.
+
 ### Defer and Resume
 
 Defer a task, then resume it later:
