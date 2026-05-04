@@ -64,9 +64,13 @@ SKILL_SRC := .claude/skills/ipman/SKILL.md
 SKILL_GEN := $(GEN_DIR)/skill_data.c
 SKILL_OBJ := $(GEN_DIR)/skill_data.o
 
+USAGE_SRC := src/usage_text.txt
+USAGE_GEN := $(GEN_DIR)/usage_data.c
+USAGE_OBJ := $(GEN_DIR)/usage_data.o
+
 TP_OBJ := $(BUILD_DIR)/third_party/cjson/cJSON.o
 
-OBJ := $(APP_OBJ) $(GEN_OBJ) $(SKILL_OBJ) $(TP_OBJ)
+OBJ := $(APP_OBJ) $(GEN_OBJ) $(SKILL_OBJ) $(USAGE_OBJ) $(TP_OBJ)
 DEP := $(OBJ:.o=.d)
 
 # Link against system SQLCipher and libsodium. SQLCipher pulls libcrypto
@@ -129,6 +133,16 @@ $(SKILL_OBJ): $(SKILL_GEN)
 $(SKILL_GEN): $(SKILL_SRC) scripts/embed_skill.sh
 	@mkdir -p $(@D)
 	sh scripts/embed_skill.sh $@ $(SKILL_SRC)
+
+# Generated usage text: mirror of the skill embed rule. Consumed by
+# print_usage() in src/main.c to write the post-version help screen.
+$(USAGE_OBJ): $(USAGE_GEN)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) -Isrc $(APP_INCLUDES) -c -o $@ $<
+
+$(USAGE_GEN): $(USAGE_SRC) scripts/embed_usage.sh
+	@mkdir -p $(@D)
+	sh scripts/embed_usage.sh $@ $(USAGE_SRC)
 
 # Third-party amalgamations: relaxed flags.
 $(BUILD_DIR)/third_party/cjson/cJSON.o: third_party/cjson/cJSON.c

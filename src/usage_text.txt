@@ -1,0 +1,88 @@
+
+Each form below is interchangeable with its bare-word and (where
+shown) short-flag equivalents: `ipman -S` = `ipman --status` =
+`ipman status`, and `ipman export ...` = `ipman --export ...`.
+
+Selectors accept a numeric id, a uid (e.g. task_42), or a label
+(resolved against the active plan).
+
+Shortcuts (read) — each dispatches one JSON op:
+  -SH / --show <selector>     Detail for a task or phase    -> task.get / phase.get
+  -LG / --log [--summary-only] [--limit N]
+                              Recent workspace events       -> event.list
+                              --summary-only drops the Details column for a
+                              compact agent view. --limit N (1-500, default
+                              20) caps row count; values out of range are
+                              clamped.
+
+Views — each composes several JSON ops into one rendered display:
+  -S  / --status              Active plan, phase, task and pending count
+                              -> workspace.context_get + task.list
+  -L  / --ls                  Pending tasks for the active plan
+                              -> workspace.context_get + task.list
+  -N  / --next                Active plan + cursor + instructions + Up next
+                              -> workspace.context_get + plan.get + phase.get
+                                 + task.get + instruction.list x3 + task.list
+  -R  / --render <plan>       Render plan as Markdown (walks the entire tree)
+
+Shortcuts (write) — each dispatches one JSON op:
+  --start  <selector>         Mark a task in_progress
+                              -> task.transition({status:"in_progress"})
+  --close  <selector> --summary <text> --comment <text>
+                              [--lessons <text>] [--open-items <text>] [--followup]
+                              [--validation <cmd:status>]... [--decision <text>]...
+                              [--commit <sha>] [--no-git] [--files <a,b,c>]
+                              Close a task with closure record
+                              (auto-captures git state when run inside a repo)
+                              -> task.close
+  --cancel <selector> --summary <text> --comment <text>
+                              Cancel a task with closure record
+                              -> task.cancel (resolution=canceled)
+  --defer  <selector> --reason-text <text> [--reason-code <code>]
+                              Defer a task with reason       -> task.defer
+  --close-phase  <selector> --summary <text> --comment <text>
+                              [--lessons <text>] [--open-items <text>] [--followup]
+                              Close a phase with closure record
+                              (all child tasks must be terminal)
+                              -> phase.close (outcome=completed)
+  --cancel-phase <selector> --summary <text> --comment <text>
+                              [--lessons <text>] [--open-items <text>] [--followup]
+                              Cancel a phase with closure record
+                              -> phase.close (outcome=canceled)
+  --current  <selector>       Set current task or phase (auto-detected)
+                              -> task.set_current / phase.set_current
+  --activate <selector>       Set the active plan for the workspace
+                              -> plan.activate
+
+Modifier:
+  --dry-run                   Combine with any write shortcut to print the
+                              JSON envelope that would be sent and exit
+                              without touching the DB
+
+Admin (outside the op model):
+  -I  / --init                Initialize workspace
+  -U  / --usage               Show this help
+  -V  / --version             Print version and exit
+  --migrate-encrypt           Convert a plaintext ipman.db to encrypted in-place
+  export --plaintext --i-understand <out.db>
+                              Emergency dump: write a plaintext SQLite copy
+                              of the encrypted DB to <out.db>
+  sql "SQL..."                Run ad-hoc SQL (developer / test escape-hatch)
+
+Agent protocol (canonical JSON in / JSON out):
+  ipman < request.json
+  -B / --b64 < request.b64    Read stdin as base64-encoded JSON
+
+Examples:
+  ipman --activate ship-login-refactor    Set the active plan
+  ipman --next                            Inspect plan, cursor, instructions, queue
+  ipman --start fix-jwt                   Mark a task in_progress
+  ipman --close fix-jwt --summary "Done" --comment "LGTM" \
+                                --validation "make test:passed"
+  ipman --close fix-jwt ... --dry-run     Preview the JSON envelope, no DB write
+  ipman --defer fix-jwt --reason-text "Blocked on infra ticket"
+
+Default storage: ./.ipman/ipman.db
+Docs after init: .ipman/START-HERE.md
+v2.1 ergonomics: docs/v2.1-ergonomics.md
+v2.2 ergonomics: docs/v2.2-ergonomics.md
