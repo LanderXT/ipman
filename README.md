@@ -12,7 +12,7 @@ Single C binary · SQLCipher-encrypted SQLite · JSON-on-stdin protocol · Linux
 
 ---
 
-`ipman` is an implementation-plan database with two surfaces: a **terse human CLI** for the operator (`ipman -S` / `ipman -N` for inspection, plus write verbs like `ipman --start` and `ipman --close` for routine supervision) and a **JSON request/response protocol** for AI agents (Claude Code, Codex, your own). Plans live in an encrypted SQLite file inside the project (`./.ipman/ipman.db`), so context survives between agent sessions, between agents, and between you and the agent.
+`ipman` is an implementation-plan database. The canonical surface is a **JSON request/response protocol** for AI agents (Claude Code, Codex, your own); over it, a terse CLI exposes **shortcuts** that wrap a single op for routine writes (`ipman --start`, `ipman --close`) and **views** that compose several ops into one rendered display for inspection (`ipman -S`, `ipman -N`). Plans live in an encrypted SQLite file inside the project (`./.ipman/ipman.db`), so context survives between agent sessions, between agents, and between you and the agent.
 
 It is the missing piece for agents that already write good code but forget what they are doing the moment the conversation compacts.
 
@@ -20,12 +20,12 @@ It is the missing piece for agents that already write good code but forget what 
 
 - [Why ipman?](#why-ipman)
 - [Five-minute tour](#five-minute-tour)
-- [Two surfaces, one database](#two-surfaces-one-database)
+- [Three surfaces, one database](#three-surfaces-one-database)
 - [Concepts](#concepts)
 - [Programmatic surface](#programmatic-surface)
 - [MCP server (optional)](#mcp-server-optional)
 - [Security](#security)
-- [Human CLI reference](#human-cli-reference)
+- [CLI reference](#cli-reference)
 - [Operations reference](#operations-reference)
 - [Building from source](#building-from-source)
 - [Project layout](#project-layout)
@@ -126,21 +126,19 @@ $ ipman -L
 └───────────────────────────────────────────┴──────────┴────────┴────────────────────────────────┘
 ```
 
-That is the full feedback loop: the agent edits the plan, you read it with `-N`, you push back, the agent picks up the changes. For the complete CLI surface, run `ipman --usage` or see [Human CLI reference](#human-cli-reference).
+That is the full feedback loop: the agent edits the plan, you read it with `-N`, you push back, the agent picks up the changes. For the complete CLI surface, run `ipman --usage` or see [CLI reference](#cli-reference).
 
-## Two surfaces, one database
+## Three surfaces, one database
 
-The same data is reachable two ways. Pick the surface by who is calling.
+The same data is reachable three ways. Pick the one that fits the call site:
 
-| | **Agent surface** | **Human surface** |
-|---|---|---|
-| Invocation | `… \| ipman` (JSON envelope on stdin) | `ipman <subcommand>` |
-| Output | JSON on stdout, exit code via [error semantics](#error-semantics) | Box-drawn tables on stdout, errors on stderr |
-| Operations | All 65 operations (`plan.create`, `task.transition`, `closure.get`, …) | Read-only views (`status`, `ls`, `show`, `log`, `next`, `render`) plus a curated set of write verbs (`start`, `close`, `cancel`, `defer`, `close-phase`, `cancel-phase`, `current`, `activate`) |
-| Mutations | Yes — full surface | Yes — but only via the curated verbs above; each one is a thin wrapper over the same JSON op an agent would send |
-| Use case | Agent-driven planning, transitions, comments | Inspection, review, supervision, routine task transitions |
+- **`ops`** — the **JSON request/response protocol**. The complete, canonical surface: 77 operations (`plan.create`, `task.transition`, `closure.get`, …) covering every read and every mutation. This is what AI agents and scripts call: `… | ipman` with a JSON envelope on stdin, JSON on stdout, exit code via [error semantics](#error-semantics).
+- **`shortcuts`** — CLI verbs that wrap a single op apiece. `ipman --start`, `ipman --close`, `ipman --defer`, `ipman --show`, `ipman --log`, `ipman --current`, `ipman --activate`, etc. Each shortcut is exactly one op under the hood, so the audit trail is identical to the agent-driven path. Use them when supervising directly without hand-rolling JSON.
+- **`views`** — CLI verbs that compose several ops into one rendered display. `ipman -S` (status), `ipman -L` (ls), `ipman -N` (next), `ipman -R` (render). `-N` is the canonical handoff view: it replaces the typical `workspace.context_get` + `plan.get` + `phase.get` + `task.get` + `instruction.list` (×3 scopes) + `task.list` sequence with one call. Views save typing for the operator; agents that need the constituent data should call the underlying ops directly.
 
-The agent drives the heavy lifting (creating plans, decomposing into phases, threading comments). The human surface is enough to step in for routine transitions when supervising directly — start a task, close it with a summary, defer one with a reason — without ever leaving the shell or hand-rolling JSON.
+Setup, maintenance, and emergency escape hatches live under **`admin`** (`ipman init`, `--migrate-encrypt`, `export --plaintext`, `sql`). They sit outside the op model on purpose. Output across all three surfaces is JSON on stdout for `ops`, box-drawn tables on stdout (errors on stderr) for `shortcuts` and `views`.
+
+The agent drives the heavy lifting (creating plans, decomposing into phases, threading comments). The shortcuts and views are enough to step in for routine transitions when supervising directly — start a task, close it with a summary, defer one with a reason — without ever leaving the shell or hand-rolling JSON.
 
 ## Concepts
 
@@ -270,66 +268,97 @@ The bridge reads `manifest.json` once at startup, builds one MCP tool per regist
 
 This is *defense at rest*, not a sandbox. Anyone who can run `ipman` as your user can read the database. Treat it like an SSH key.
 
-## Human CLI reference
+## CLI reference
 
-Selectors accept a numeric `id`, a `uid` (e.g. `task_42`), or a `label` (resolved against the active plan). Every form is interchangeable with its bare-word and short-flag equivalents: `ipman -S` ≡ `ipman status` ≡ `ipman --status`.
+Selectors accept a numeric `id`, a `uid` (e.g. `task_42`), or a `label` (resolved against the active plan). Every form is interchangeable with its bare-word and short-flag equivalents: `ipman -S` ≡ `ipman status` ≡ `ipman --status`. The short/long form is independent of the category — every command keeps both spellings.
 
 For the design rationale, the no-goals, and migration patterns from hand-rolled v2.0 JSON, see [`docs/v2.1-ergonomics.md`](docs/v2.1-ergonomics.md).
 
-### Read-only
+### Shortcuts (read)
+
+Each command below dispatches a single JSON op. The CLI just saves you the envelope.
+
+```
+ipman -SH / --show <selector>       Detail for a task or phase    → task.get / phase.get
+ipman -LG / --log [--summary-only] [--limit N]
+                                    Recent workspace events.      → event.list
+                                    --summary-only drops the
+                                    Details column; --limit N (1-500, default 20) caps
+                                    rows (out-of-range values are clamped)
+```
+
+### Views
+
+Each command below composes multiple JSON ops into a single rendered display. There is no single op that returns the same bundle — these views live in the CLI on purpose, so agents stay close to the constituent ops.
 
 ```
 ipman -S  / --status                Active plan, current phase, current task, pending count
-ipman -L  / --ls                    List pending tasks for the active plan
-ipman -SH / --show <selector>       Detail for a task or phase
-ipman -LG / --log [--summary-only] [--limit N]
-                                    Recent workspace events. --summary-only drops the
-                                    Details column; --limit N (1-500, default 20) caps
-                                    rows (out-of-range values are clamped)
-ipman -N  / --next                  Active plan, cursor, instructions, and "Up next" pending tasks
-ipman -R  / --render <plan>         Render plan as Markdown
+                                    → workspace.context_get + task.list (2 ops)
+ipman -L  / --ls                    Pending tasks for the active plan
+                                    → workspace.context_get + task.list (2 ops)
+ipman -N  / --next                  Active plan + cursor + standing instructions + "Up next"
+                                    → workspace.context_get + plan.get + phase.get + task.get
+                                      + instruction.list ×3 + task.list (~8 ops)
+ipman -R  / --render <plan>         Render plan as Markdown          → walks the plan tree
 ```
 
-`ipman -N` is the session entry-point: one call replaces the typical `workspace.context_get` + `plan.get` + `phase.get` + `task.get` + `instruction.list` (×3 scopes) + `task.list` sequence.
+`ipman -N` is the session entry-point: one call replaces the full handoff sequence above.
 
-### Write
+### Shortcuts (write)
+
+Each command below dispatches a single JSON op. The CLI handles selector resolution, captures git context where applicable, and prints a confirmation line.
 
 ```
 ipman --start    <selector>                                  Mark a task in_progress
+                                                             → task.transition({status:"in_progress"})
 ipman --close    <selector> --summary <text> --comment <text>
                             [--lessons <text>] [--open-items <text>] [--followup]
                             [--validation <cmd:status>]... [--decision <text>]...
                             Close a task with closure record (auto-captures git state
                             when run inside a repo: commit_sha, dirty, files_changed)
+                                                             → task.close
 ipman --cancel   <selector> --summary <text> --comment <text>
                             Cancel a task with closure record
+                                                             → task.cancel (resolution=canceled)
 ipman --defer    <selector> --reason-text <text> [--reason-code <code>]
-                            Defer a task with reason
+                            Defer a task with reason          → task.defer
 ipman --close-phase  <selector> --summary <text> --comment <text>
                             [--lessons <text>] [--open-items <text>] [--followup]
                             Close a phase with closure record (all child tasks must
-                            be terminal)
+                            be terminal)                      → phase.close (outcome=completed)
 ipman --cancel-phase <selector> --summary <text> --comment <text>
                             [--lessons <text>] [--open-items <text>] [--followup]
                             Cancel a phase with closure record
-ipman --dry-run             Combine with any write verb to print the JSON envelope
-                            that would be sent and exit without touching the DB
-```
-
-Every write verb is a thin client over the same JSON op an agent would send. `--validation` and `--decision` are repeatable and surface as structured evidence in the closure record (rendered in `closure.get` and the plan markdown).
-
-### Context
-
-```
+                                                             → phase.close (outcome=canceled)
 ipman --current  <selector>         Set current task or phase (auto-detected)
+                                                             → task.set_current / phase.set_current
 ipman --activate <selector>         Set the active plan for the workspace
+                                                             → plan.activate
 ```
 
-### Setup
+`--validation` and `--decision` are repeatable and surface as structured evidence in the closure record (rendered in `closure.get` and the plan markdown).
+
+#### Modifier
+
+```
+ipman --dry-run             Combine with any write shortcut to print the JSON
+                            envelope that would be sent and exit without touching
+                            the DB. The printed envelope is valid JSON and can be
+                            piped back into ipman if you decide to run it.
+```
+
+### Admin
+
+Setup, maintenance, and emergency escape hatches. These do not fit the op model.
 
 ```
 ipman -I  / --init                  Initialize workspace (creates ./.ipman/)
 ipman -U  / --usage                 Show full help
+ipman -V  / --version               Print binary version
+ipman --migrate-encrypt             Convert a plaintext ipman.db to encrypted in-place
+ipman export --plaintext --i-understand <out.db>
+                                    Emergency dump to plaintext SQLite
+ipman sql "SQL..."                  Ad-hoc SQL escape hatch (developer / test only)
 ```
 
 ### Agent protocol
@@ -337,15 +366,6 @@ ipman -U  / --usage                 Show full help
 ```
 ipman < request.json                JSON request/response on stdin/stdout
 ipman -B / --b64 < request.b64      Same, with base64-encoded JSON input
-```
-
-### Maintenance
-
-```
-ipman --migrate-encrypt             Convert a plaintext ipman.db to encrypted in-place
-ipman export --plaintext --i-understand <out.db>
-                                    Emergency dump to plaintext SQLite
-ipman sql "SQL..."                  Ad-hoc SQL escape hatch (developer / test only)
 ```
 
 ### Examples
@@ -430,7 +450,7 @@ Runs the C unit tests under `tests/unit/`, then every shell-driven integration t
 ```
 ipman/
 ├── src/                  # All C sources — one .c/.h pair per module
-│   ├── main.c            # Entry point, human CLI, argv routing
+│   ├── main.c            # Entry point, CLI shortcuts and views, argv routing
 │   ├── dispatch.c        # Operation registry (single source of truth)
 │   ├── protocol.c        # JSON envelope + error codes
 │   ├── db.c              # SQLCipher connection setup
@@ -466,7 +486,7 @@ The "single source of truth" pattern is deliberate: the dispatch table in `src/d
 - `.ipman/` generated documentation tree (regenerated on every `init`)
 - Bundled Claude Code skill (also installed for Codex)
 - Optional MCP server (`mcp/ipman_mcp.py`) for MCP-aware clients
-- Human CLI veneer: `--start`, `--close`, `--cancel`, `--defer`, `--close-phase`, `--cancel-phase`, `--current`, `--activate`, `--next`, `--log`, plus `--dry-run` (see [`docs/v2.1-ergonomics.md`](docs/v2.1-ergonomics.md) and [`docs/v2.2-ergonomics.md`](docs/v2.2-ergonomics.md))
+- CLI shortcuts (1:1 wrappers over a JSON op): `--start`, `--close`, `--cancel`, `--defer`, `--close-phase`, `--cancel-phase`, `--current`, `--activate`, `--show`, `--log`, plus the `--dry-run` modifier; CLI views (compose multiple ops): `--status`, `--ls`, `--next`, `--render` (see [`docs/v2.1-ergonomics.md`](docs/v2.1-ergonomics.md) and [`docs/v2.2-ergonomics.md`](docs/v2.2-ergonomics.md))
 - Structured closure evidence: `validations_run` and `decisions` on `task.close`, plus auto-captured git context (`commit_sha`, `dirty`, `files_changed`) when running inside a work tree
 
 Planned (no commitment yet):

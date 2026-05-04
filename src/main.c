@@ -152,60 +152,74 @@ static void print_usage(FILE *out) {
         "Selectors accept a numeric id, a uid (e.g. task_42), or a label\n"
         "(resolved against the active plan).\n"
         "\n"
-        "Read-only:\n"
-        "  -S  / --status              Show active plan, phase, task and pending count\n"
-        "  -L  / --ls                  List pending tasks for the active plan\n"
-        "  -SH / --show <selector>     Show detail for a task or phase\n"
+        "Shortcuts (read) — each dispatches one JSON op:\n"
+        "  -SH / --show <selector>     Detail for a task or phase    -> task.get / phase.get\n"
         "  -LG / --log [--summary-only] [--limit N]\n"
-        "                              Show recent workspace events. --summary-only\n"
-        "                              drops the Details column for a compact agent\n"
-        "                              view. --limit N (1-500, default 20) caps row\n"
-        "                              count; values out of range are clamped.\n"
-        "  -N  / --next                Show active plan, cursor, instructions and Up next\n"
-        "  -R  / --render <plan>       Render plan as Markdown (code, uid, label, or id)\n"
+        "                              Recent workspace events       -> event.list\n"
+        "                              --summary-only drops the Details column for a\n"
+        "                              compact agent view. --limit N (1-500, default\n"
+        "                              20) caps row count; values out of range are\n"
+        "                              clamped.\n"
         "\n"
-        "Write:\n"
+        "Views — each composes several JSON ops into one rendered display:\n"
+        "  -S  / --status              Active plan, phase, task and pending count\n"
+        "                              -> workspace.context_get + task.list\n"
+        "  -L  / --ls                  Pending tasks for the active plan\n"
+        "                              -> workspace.context_get + task.list\n"
+        "  -N  / --next                Active plan + cursor + instructions + Up next\n"
+        "                              -> workspace.context_get + plan.get + phase.get\n"
+        "                                 + task.get + instruction.list x3 + task.list\n"
+        "  -R  / --render <plan>       Render plan as Markdown (walks the entire tree)\n"
+        "\n"
+        "Shortcuts (write) — each dispatches one JSON op:\n"
         "  --start  <selector>         Mark a task in_progress\n"
+        "                              -> task.transition({status:\"in_progress\"})\n"
         "  --close  <selector> --summary <text> --comment <text>\n"
         "                              [--lessons <text>] [--open-items <text>] [--followup]\n"
         "                              [--validation <cmd:status>]... [--decision <text>]...\n"
         "                              [--commit <sha>] [--no-git] [--files <a,b,c>]\n"
         "                              Close a task with closure record\n"
         "                              (auto-captures git state when run inside a repo)\n"
+        "                              -> task.close\n"
         "  --cancel <selector> --summary <text> --comment <text>\n"
         "                              Cancel a task with closure record\n"
+        "                              -> task.cancel (resolution=canceled)\n"
         "  --defer  <selector> --reason-text <text> [--reason-code <code>]\n"
-        "                              Defer a task with reason\n"
+        "                              Defer a task with reason       -> task.defer\n"
         "  --close-phase  <selector> --summary <text> --comment <text>\n"
         "                              [--lessons <text>] [--open-items <text>] [--followup]\n"
         "                              Close a phase with closure record\n"
         "                              (all child tasks must be terminal)\n"
+        "                              -> phase.close (outcome=completed)\n"
         "  --cancel-phase <selector> --summary <text> --comment <text>\n"
         "                              [--lessons <text>] [--open-items <text>] [--followup]\n"
         "                              Cancel a phase with closure record\n"
-        "  --dry-run                   Combine with any write verb to print the JSON\n"
-        "                              envelope that would be sent and exit without\n"
-        "                              touching the DB\n"
-        "\n"
-        "Context:\n"
+        "                              -> phase.close (outcome=canceled)\n"
         "  --current  <selector>       Set current task or phase (auto-detected)\n"
+        "                              -> task.set_current / phase.set_current\n"
         "  --activate <selector>       Set the active plan for the workspace\n"
+        "                              -> plan.activate\n"
         "\n"
-        "Setup:\n"
+        "Modifier:\n"
+        "  --dry-run                   Combine with any write shortcut to print the\n"
+        "                              JSON envelope that would be sent and exit\n"
+        "                              without touching the DB\n",
+        out);
+    fputs(
+        "\n"
+        "Admin (outside the op model):\n"
         "  -I  / --init                Initialize workspace\n"
         "  -U  / --usage               Show this help\n"
         "  -V  / --version             Print version and exit\n"
-        "\n"
-        "Agent protocol (JSON on stdin):\n"
-        "  ipman < request.json\n"
-        "  -B / --b64 < request.b64    Read stdin as base64-encoded JSON\n"
-        "\n"
-        "Maintenance:\n"
         "  --migrate-encrypt           Convert a plaintext ipman.db to encrypted in-place\n"
         "  export --plaintext --i-understand <out.db>\n"
         "                              Emergency dump: write a plaintext SQLite copy\n"
         "                              of the encrypted DB to <out.db>\n"
         "  sql \"SQL...\"                Run ad-hoc SQL (developer / test escape-hatch)\n"
+        "\n"
+        "Agent protocol (canonical JSON in / JSON out):\n"
+        "  ipman < request.json\n"
+        "  -B / --b64 < request.b64    Read stdin as base64-encoded JSON\n"
         "\n"
         "Examples:\n"
         "  ipman --activate ship-login-refactor    Set the active plan\n"
@@ -620,7 +634,7 @@ static void print_dry_run_envelope(const char *op, const cJSON *params,
     cJSON_Delete(envelope);
 }
 
-/* ---- human CLI commands ------------------------------------------- */
+/* ---- CLI shortcuts and views -------------------------------------- */
 
 static int run_status(void) {
     char home[PATH_MAX], dbpath[PATH_MAX];
@@ -831,7 +845,7 @@ static int run_show(const char *selector) {
     return 0;
 }
 
-/* --start <selector>: human verb to mark a task in_progress.
+/* --start <selector>: shortcut for task.transition({status:"in_progress"}).
  * Selector must resolve to a task (kind mismatch is rejected by the resolver). */
 static int run_start(const char *selector) {
     char home[PATH_MAX], dbpath[PATH_MAX];
@@ -1269,7 +1283,7 @@ static int run_close(int argc, char **argv) {
 
 /* --cancel <selector> --summary <text> --comment <text>
  * Resolves a task selector and dispatches task.cancel with
- * resolution=canceled. The human verb does not expose the other resolutions
+ * resolution=canceled. The shortcut does not expose the other resolutions
  * (not_planned, discarded, duplicate); use the raw protocol for those. */
 static int run_cancel(int argc, char **argv) {
     const char *selector = NULL;
@@ -1492,7 +1506,7 @@ static int run_cancel_phase(int argc, char **argv) {
 }
 
 /* --defer <selector> --reason-text <text> [--reason-code <code>]
- * Resolves a task selector and dispatches task.defer. The human verb
+ * Resolves a task selector and dispatches task.defer. The shortcut
  * requires --reason-text (the protocol allows reason_code alone, but free
  * text guarantees the audit trail stays human-readable). --reason-code is
  * optional and only sent when provided; deferred_until is not exposed —
@@ -1580,7 +1594,8 @@ static int run_defer(int argc, char **argv) {
     return 0;
 }
 
-/* --current <selector>: human verb to set the current task or phase.
+/* --current <selector>: shortcut to set the current task or phase.
+ * Dispatches task.set_current or phase.set_current depending on resolved kind.
  * The resolver auto-detects kind (task or phase) and routes to the matching
  * op. Plans are rejected at the resolver — use --activate for plans. */
 static int run_current(const char *selector) {
@@ -1631,7 +1646,7 @@ static int run_current(const char *selector) {
     return 0;
 }
 
-/* --activate <selector>: human verb to set the active plan for the workspace.
+/* --activate <selector>: shortcut for plan.activate.
  * Selector must resolve to a plan (kind mismatch is rejected by the resolver). */
 static int run_activate(const char *selector) {
     char home[PATH_MAX], dbpath[PATH_MAX];

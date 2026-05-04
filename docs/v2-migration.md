@@ -27,7 +27,7 @@ That is the first thing to fix.
 | `plan.activate` selector | `id` or `code` | `id` or `code` (unchanged) |
 | Lookup ops (`plan.lookup`, `phase.lookup`, `task.lookup`) | available | available (the single legitimate name → id path) |
 
-`plan.export` is the deliberate exception: it still emits `code` and `uid` for archival round-trip preservation. `workspace.context_get` also returns the active plan `code` for human CLI display. Exports are snapshots, not ordinary entity API responses.
+`plan.export` is the deliberate exception: it still emits `code` and `uid` for archival round-trip preservation. `workspace.context_get` also returns the active plan `code` for CLI display. Exports are snapshots, not ordinary entity API responses.
 
 ---
 

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Copyright 2026 Homero Leal
  *
- * Unit tests for src/cli_selector.c — the v2.1 human-surface selector
+ * Unit tests for src/cli_selector.c — the v2.1 shortcuts/views selector
  * resolver. Each case bootstraps a hermetic ipman workspace under a
  * temp IPMAN_HOME, populates a small fixture via the v2 protocol, then
  * exercises one resolver path.

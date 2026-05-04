@@ -68,24 +68,42 @@ JSON request schemas document allowed params, primitive types/enums, required sc
 
 **Read the schema file for the operation you need — don't guess params.**
 
-## 5. CLI shortcuts (v2.1+ ergonomics)
+## 5. CLI shortcuts and views (v2.1+ ergonomics)
 
-For routine reads and a curated set of writes, prefer the human-CLI veneer over hand-crafted JSON envelopes. Every veneer command is a thin client over the same op an agent would send, so semantics are identical — you just save the envelope boilerplate.
+For routine reads and a curated set of writes, prefer the CLI surface over hand-crafted JSON envelopes. Two flavors:
+
+- **Shortcuts** are 1:1 wrappers over a single op — semantics are identical to the JSON path; you just save the envelope boilerplate.
+- **Views** compose multiple ops into one rendered display. They have no single op equivalent on purpose; if you need the constituent data, call the underlying ops directly.
 
 ### Read shortcuts
 
+Each command dispatches a single JSON op.
+
 ```sh
-ipman -S                         # active plan, current phase, current task, pending count
-ipman -L                         # pending tasks for the active plan
-ipman -SH <selector>             # detail for a task or phase
+ipman -SH <selector>             # detail for a task or phase     → task.get / phase.get
 ipman -LG [--summary-only] [--limit N]
-                                 # recent events. v2.2: --summary-only drops Details column;
+                                 # recent events                  → event.list
+                                 # v2.2: --summary-only drops Details column;
                                  # --limit N (1-500, default 20) caps rows (clamped if out of range).
-ipman -N                         # active plan + cursor + standing instructions + Up next pending
-ipman -R <plan>                  # render plan as Markdown
 ```
 
-`ipman -N` is the **handoff super-shortcut**: a single call replaces the typical sequence `workspace.context_get` → `plan.get` → `phase.get` → `task.get` → `instruction.list` (×3 scopes). Use it whenever you would have started a session with five separate envelopes.
+### Read views
+
+Each command composes several ops into one display. There is no single op that returns the same bundle.
+
+```sh
+ipman -S                         # active plan, current phase, current task, pending count
+                                 # → workspace.context_get + task.list (2 ops)
+ipman -L                         # pending tasks for the active plan
+                                 # → workspace.context_get + task.list (2 ops)
+ipman -N                         # active plan + cursor + standing instructions + Up next pending
+                                 # → workspace.context_get + plan.get + phase.get + task.get
+                                 #   + instruction.list ×3 + task.list (~8 ops)
+ipman -R <plan>                  # render plan as Markdown
+                                 # → walks the entire plan tree
+```
+
+`ipman -N` is the **handoff view**: a single call replaces the typical session-start sequence above. Use it whenever you would have started a session with several separate envelopes.
 
 ### Write shortcuts
 

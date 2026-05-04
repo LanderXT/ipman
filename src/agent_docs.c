@@ -455,13 +455,13 @@ static char *render_start_here(const char *home, const char *db_path,
     if (append_frontmatter(&b, "start_here", generated_at, NULL, NULL, NULL) != 0) return NULL;
     if (buf_appendf(&b,
         "# START HERE\n\n"
-        "`ipman` (Implementation Plan Manager) is a local plan store with two surfaces: a terse human CLI for routine inspection and supervision, and a JSON-in / JSON-out protocol for AI agents and scripts. "
+        "`ipman` (Implementation Plan Manager) is a local plan store with one canonical JSON-in / JSON-out protocol for AI agents and scripts, plus a terse CLI surface that exposes shortcuts (1:1 wrappers over a single op) and views (compositions of several ops into one rendered display) for routine inspection and supervision. "
         "It stores structured plans, phases, tasks, instructions, comments, closure memory, relations, and audit events in SQLite.\n\n"
         "- Effective workspace: `%s`\n"
         "- Database: `%s`\n"
         "- Manifest: `%s/manifest.json`\n\n"
         "## Common Verbs (CLI)\n\n"
-        "For inspection, navigation, and routine task transitions, prefer the human CLI. Selectors accept a numeric `id`, a `uid` (e.g. `task_42`), or a `label` resolved against the active plan.\n\n"
+        "For inspection, navigation, and routine task transitions, prefer the CLI shortcuts and views. Selectors accept a numeric `id`, a `uid` (e.g. `task_42`), or a `label` resolved against the active plan.\n\n"
         "- `ipman --next` (`-N`): session entry-point — active plan, cursor, instructions, and \"Up next\" pending tasks in one call.\n"
         "- `ipman --status` (`-S`): active plan, current phase, current task, pending count.\n"
         "- `ipman --ls` (`-L`): list pending tasks for the active plan.\n"

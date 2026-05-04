@@ -10,14 +10,14 @@
 #include "sqlite3.h"
 
 /*
- * CLI-side resolver for the v2.1 human surface.
+ * CLI-side resolver for the v2.1 shortcuts and views.
  *
  * v2.0 op handlers accept `id` only; `uid` and `label` were moved to dedicated
  * `*.lookup` ops. To keep CLI ergonomics the same as v1 ("ipman --show
- * ship-login-refactor"), the human verbs need to translate user-friendly
- * arguments to numeric ids before dispatching. This module centralizes that
- * translation so every verb shares one parsing rule, one error message set,
- * and one definition of "active plan scope".
+ * ship-login-refactor"), the CLI shortcuts and views need to translate
+ * user-friendly arguments to numeric ids before dispatching. This module
+ * centralizes that translation so every verb shares one parsing rule, one
+ * error message set, and one definition of "active plan scope".
  */
 
 /*
