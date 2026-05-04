@@ -462,7 +462,7 @@ static char *render_start_here(const char *home, const char *db_path,
         "- Manifest: `%s/manifest.json`\n\n"
         "## Common Verbs (CLI)\n\n"
         "For inspection, navigation, and routine task transitions, prefer the CLI shortcuts and views. Selectors accept a numeric `id`, a `uid` (e.g. `task_42`), or a `label` resolved against the active plan.\n\n"
-        "- `ipman --next` (`-N`): session entry-point — active plan, cursor, instructions, and \"Up next\" pending tasks in one call.\n"
+        "- `ipman --next` (`-N`): canonical agent handoff view — active plan, cursor, standing instructions (project + plan + phase scopes), and \"Up next\" pending tasks in one call. Make this the first call on session resume.\n"
         "- `ipman --status` (`-S`): active plan, current phase, current task, pending count.\n"
         "- `ipman --ls` (`-L`): list pending tasks for the active plan.\n"
         "- `ipman --show <selector>` (`-SH`): detail for a task or phase.\n"

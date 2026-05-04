@@ -132,7 +132,7 @@ That is the full feedback loop: the agent edits the plan, you read it with `-N`,
 
 The same data is reachable three ways. Pick the one that fits the call site:
 
-- **`ops`** — the **JSON request/response protocol**. The complete, canonical surface: 77 operations (`plan.create`, `task.transition`, `closure.get`, …) covering every read and every mutation. This is what AI agents and scripts call: `… | ipman` with a JSON envelope on stdin, JSON on stdout, exit code via [error semantics](#error-semantics).
+- **`ops`** — the **JSON request/response protocol**. The complete, canonical surface: 76 operations (`plan.create`, `task.transition`, `closure.get`, …) covering every read and every mutation. This is what AI agents and scripts call: `… | ipman` with a JSON envelope on stdin, JSON on stdout, exit code via [error semantics](#error-semantics).
 - **`shortcuts`** — CLI verbs that wrap a single op apiece. `ipman --start`, `ipman --close`, `ipman --defer`, `ipman --show`, `ipman --log`, `ipman --current`, `ipman --activate`, etc. Each shortcut is exactly one op under the hood, so the audit trail is identical to the agent-driven path. Use them when supervising directly without hand-rolling JSON.
 - **`views`** — CLI verbs that compose several ops into one rendered display. `ipman -S` (status), `ipman -L` (ls), `ipman -N` (next), `ipman -R` (render). `-N` is the canonical handoff view: it replaces the typical `workspace.context_get` + `plan.get` + `phase.get` + `task.get` + `instruction.list` (×3 scopes) + `task.list` sequence with one call. Views save typing for the operator; agents that need the constituent data should call the underlying ops directly.
 
@@ -207,7 +207,7 @@ Response:
   "created_at":"2026-04-30T12:33:11.373Z", ...}}}
 ```
 
-Use `ipman --b64` when shell escaping is awkward — stdin and stdout become base64-encoded JSON. The full operation surface (65 ops across ten entities) is enumerated under [Operations reference](#operations-reference).
+Use `ipman --b64` when shell escaping is awkward — stdin and stdout become base64-encoded JSON. The full operation surface (76 ops across 13 entities) is enumerated under [Operations reference](#operations-reference).
 
 ### How agents discover the API
 
@@ -396,7 +396,7 @@ ipman --close review-pr-42 \
 
 ## Operations reference
 
-The runtime exposes 65 operations across ten entities. The full, always-current list lives at `.ipman/indexes/ipman.index.operations.md` after init; here is the shape:
+The runtime exposes 76 operations across 13 entities. The full, always-current list lives at `.ipman/indexes/ipman.index.operations.md` after init; here is the shape:
 
 | Entity | Common verbs |
 |---|---|
@@ -481,7 +481,7 @@ The "single source of truth" pattern is deliberate: the dispatch table in `src/d
 **v2.2.0** — current release. Stable surfaces:
 
 - JSON request/response protocol at `protocol_version: 2` (unchanged from v2.0; v2.1/v2.2 added zero protocol ops)
-- All 65 operations across ten entities
+- All 76 operations across 13 entities
 - Encrypted SQLite storage layout (SQLCipher + Argon2id)
 - `.ipman/` generated documentation tree (regenerated on every `init`)
 - Bundled Claude Code skill (also installed for Codex)

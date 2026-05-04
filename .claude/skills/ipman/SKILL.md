@@ -122,7 +122,17 @@ ipman --dry-run                  # combine with any write verb to print the JSON
                                  # that would be sent and exit without touching the DB
 ```
 
-`--dry-run` is the agent-friendliest way to confirm a write before committing it.
+`--dry-run` prints the JSON envelope that would be sent to `ipman` and exits without touching the database. Use it to inspect destructive operations before committing:
+
+```sh
+# Preview the close envelope (no DB write)
+ipman --close task_42 --summary "Shipped" --comment "Merged in #88" --dry-run
+
+# Preview a cancel before pulling the trigger
+ipman --cancel task_42 --summary "Out of scope" --comment "Deprioritized" --dry-run
+```
+
+The printed envelope is valid JSON you can pipe directly to `ipman` once confirmed — or edit first if you want to add optional fields (`--lessons`, `--open-items`, etc.).
 
 ### When to drop back to JSON
 
@@ -223,6 +233,52 @@ echo '{"protocol_version":2,"request_id":"r14","actor":"agent","op":"instruction
 ```
 
 Use instructions for standing constraints and operating guidance. Use comments for conversational notes, progress, and decisions.
+
+### Multi-scope `instruction.list`
+
+`instruction.list` accepts `entity_type` of `plan`, `phase`, `task`, or `project`. The `project` scope is workspace-wide and persists across plan lifecycles — use it for constraints that should outlive any single plan.
+
+```sh
+# Workspace-wide standing instructions (survive plan close/archive)
+echo '{"protocol_version":2,"request_id":"r15","actor":"agent","op":"instruction.list","params":{"entity_type":"project","entity_id":1}}' | ipman
+
+# Plan-scoped instructions (tied to an active plan)
+echo '{"protocol_version":2,"request_id":"r16","actor":"agent","op":"instruction.list","params":{"entity_type":"plan","entity_id":1}}' | ipman
+```
+
+The handoff view (`ipman -N`) already surfaces `project`, `plan`, and `phase` scopes in one call. Use the JSON path when you need a specific scope in isolation or as part of a script.
+
+### Cross-plan `task.list`
+
+`plan_id` is optional on `task.list`. Omitting it queries across all plans — useful for finding in-progress work that spans multiple plans, auditing the full workspace, or locating orphaned tasks.
+
+```sh
+# All in-progress tasks workspace-wide (limit 50)
+echo '{"protocol_version":2,"request_id":"r17","actor":"agent","op":"task.list","params":{"status":"in_progress","limit":50}}' | ipman
+
+# All deferred tasks across every plan, starting at offset 0
+echo '{"protocol_version":2,"request_id":"r18","actor":"agent","op":"task.list","params":{"deferred":true,"limit":50}}' | ipman
+```
+
+When `plan_id` is present, results are scoped to that plan. When absent, results span all plans and each task object still includes its `plan_id` field so you can tell them apart.
+
+### Reorder phases with `phase.move`
+
+`phase.move` changes a phase's position within its plan. The `sequence_no` param is 1-based and must be within the plan's current phase count. The runtime shifts other phases to make room — no manual renumbering needed.
+
+```sh
+# Move phase 3 to position 1 (promote it to the front)
+echo '{"protocol_version":2,"request_id":"r19","actor":"agent","op":"phase.move","params":{"id":3,"sequence_no":1}}' | ipman
+# → result.phase.sequence_no is now 1; sibling phases are renumbered automatically
+```
+
+Use `phase.list` first to inspect current ordering before moving:
+
+```sh
+echo '{"protocol_version":2,"request_id":"r20","actor":"agent","op":"phase.list","params":{"plan_id":1}}' | ipman
+```
+
+`phase.move` is rejected for phases in terminal state (`closed`, `canceled`).
 
 For operations not covered here, see `.ipman/operations/ipman.op.*.schema.md` for the full param list.
 
