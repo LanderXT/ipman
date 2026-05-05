@@ -138,6 +138,20 @@ static int emit_fatal(const char *request_id, ipman_error_code_t code,
     return 1;
 }
 
+/* Like emit_fatal, but honors the semantic-vs-fatal distinction in
+ * ipman_error_is_fatal: validation_failed/conflict/etc. produce a JSON
+ * envelope on stdout with exit code 0, matching what the JSON dispatch
+ * path does. CLI verbs use this for recoverable errors so callers can
+ * cleanly distinguish "binary blew up" from "operation legitimately
+ * declined". */
+static int emit_op_error(const char *request_id, ipman_error_code_t code,
+                         const char *msg) {
+    cJSON *resp = ipman_response_err(request_id, code, msg, NULL);
+    emit_response(resp);
+    if (resp) cJSON_Delete(resp);
+    return ipman_error_is_fatal(code) ? 1 : 0;
+}
+
 /* Human-readable nudge after a malformed JSON envelope. Stdout (the JSON
  * response) is unchanged; this only writes to stderr, which programmatic
  * consumers already ignore. Scoped to ipman_request_parse failures — never
@@ -312,6 +326,26 @@ static void auto_name_project_if_default(sqlite3 *db, const char *home) {
 }
 
 static int run_init(void) {
+    /* Refuse `init` when cwd is inside a git repo but is NOT the repo
+     * root. This is the silent-fork hazard the workspace discovery
+     * upgrade in v2.4.2 closes: an agent in a subdir or worktree subdir
+     * who runs `ipman init` would otherwise plant a stray .ipman/
+     * alongside cwd, divorced from the data the user actually cares
+     * about. The check is skipped when IPMAN_HOME is set explicitly
+     * (operator escape hatch) and when we are not inside any repo at
+     * all (legacy ad-hoc use). */
+    char rel_root[PATH_MAX];
+    if (ipman_home_repo_root_relpath(rel_root, sizeof rel_root) == 0 &&
+        strcmp(rel_root, ".") != 0) {
+        char msg[PATH_MAX + 200];
+        snprintf(msg, sizeof msg,
+                "init must run at the repo root (\"%s\" relative to cwd), "
+                "not from a subdir or worktree subdir; cd to the root or "
+                "set IPMAN_HOME explicitly to override",
+                rel_root);
+        return emit_op_error(NULL, IPMAN_ERR_VALIDATION_FAILED, msg);
+    }
+
     char home[PATH_MAX];
     char dbpath[PATH_MAX];
     sqlite3 *db = NULL;

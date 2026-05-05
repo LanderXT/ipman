@@ -478,11 +478,12 @@ The "single source of truth" pattern is deliberate: the dispatch table in `src/d
 
 ## Status and roadmap
 
-**v2.4.1** — current release. Stable surfaces:
+**v2.4.2** — current release. Stable surfaces:
 
 - JSON request/response protocol at `protocol_version: 2` (unchanged from v2.0; every release since has been wire-additive)
 - All 76 operations across 13 entities (`plan`, `phase`, `task`, `comment`, `instruction`, `event`, `closure_record`, `task_relation`, `project`, `tool`, `env_var`, `workspace`, `workspace_context`)
 - Encrypted SQLite storage layout (SQLCipher + Argon2id)
+- Workspace discovery walks cwd upward to find the repo root (handles subdirs, git worktrees) so an agent in `proyecto/src/` resolves to `proyecto/.ipman/`, not a stray subdir-local one; `init` refuses from a subdir to prevent silent forks. `IPMAN_HOME` remains the explicit escape hatch.
 - `.ipman/` generated documentation tree (regenerated on every `init`); stale artifacts from older binary versions evict to `.ipman/.attic/<timestamp>/` with `IPMAN_ATTIC_LIMIT` (default 100) capping growth
 - Bundled Claude Code skill (also installed for Codex)
 - Optional MCP server (`mcp/ipman_mcp.py`) for MCP-aware clients — exposes the 76 ops as MCP tools by reading `manifest.json`
@@ -499,7 +500,7 @@ Planned (no commitment yet):
 - Sub-tasks UX surface (`parent_task_id` already in schema since v2.0; only `task.list` filter, `--next` render, and creation shortcut deferred)
 - Parity test for the `Known error codes` enumeration in the envelope doc
 
-Breaking wire changes bump `protocol_version` and ship a migration; the v1 → v2 cutover is documented in [`docs/v2-migration.md`](docs/v2-migration.md). v2.1, v2.2, v2.3, and v2.4 are all purely additive over v2.0 — no wire changes, no client migration required. Per-release notes: [v2.1](docs/v2.1-ergonomics.md), [v2.2](docs/v2.2-ergonomics.md), [v2.3](docs/v2.3-tools-and-env-vars.md), [v2.4](docs/v2.4-slug-import-docs.md), [v2.4.1](docs/v2.4.1-attic-sweep.md).
+Breaking wire changes bump `protocol_version` and ship a migration; the v1 → v2 cutover is documented in [`docs/v2-migration.md`](docs/v2-migration.md). v2.1, v2.2, v2.3, v2.4, v2.4.1, and v2.4.2 are all purely additive over v2.0 — no wire changes, no client migration required. Per-release notes: [v2.1](docs/v2.1-ergonomics.md), [v2.2](docs/v2.2-ergonomics.md), [v2.3](docs/v2.3-tools-and-env-vars.md), [v2.4](docs/v2.4-slug-import-docs.md), [v2.4.1](docs/v2.4.1-attic-sweep.md), [v2.4.2](docs/v2.4.2-workspace-discovery.md).
 
 ## Contributing
 
