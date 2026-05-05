@@ -23,7 +23,7 @@
 #include <unistd.h>
 
 #define IPMAN_AGENT_DOCS_GENERATOR_VERSION "1.0.0"
-#define IPMAN_AGENT_DOCS_CONTENT_REVISION "2026-05-05.2"
+#define IPMAN_AGENT_DOCS_CONTENT_REVISION "2026-05-05.3"
 
 typedef struct {
     const char *name;
@@ -558,8 +558,8 @@ static char *render_protocol_doc(const char *generated_at) {
         /* IMPORTANT: this list mirrors the strings in src/protocol.c:k_code_strings.
          * If you add or remove an error code in src/protocol.h, update both
          * places — the generator does not introspect the enum. */
-        "Known error codes: `invalid_request`, `unknown_op`, `validation_failed`, `not_found`, `conflict`, `internal_error`.\n\n"
-        "Semantic errors such as validation failures, conflicts, missing records, and unknown operations are JSON responses and usually exit 0. Fatal protocol and internal errors exit non-zero. Always parse stdout and inspect `.ok`.\n\n"
+        "Known error codes: `invalid_request`, `unknown_op`, `validation_failed`, `not_found`, `conflict`, `internal_error`, `attic_full`.\n\n"
+        "Semantic errors such as validation failures, conflicts, missing records, unknown operations, and `attic_full` (raised only by `workspace.refresh_agent_docs` when `.ipman/.attic` exceeds `IPMAN_ATTIC_LIMIT`) are JSON responses and usually exit 0. Fatal protocol and internal errors exit non-zero. Always parse stdout and inspect `.ok`.\n\n"
         "### Optional `error.details`\n\n"
         "`error.details` is an optional machine-readable object that some errors attach to the envelope. Agents can switch on `error.details.kind` for fine-grained branching without parsing `error.message`. When present, `code` and `message` keep their existing meaning — `details` is additive.\n\n"
         "Transition failures on task operations (`task.transition`, `task.defer`, `task.cancel`, `task.mark_duplicate`, `task.replace`, `task.close`, `task.reopen`) return `code: \"conflict\"` with:\n\n"
