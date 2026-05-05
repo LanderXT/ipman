@@ -63,3 +63,25 @@ jq -e --argjson n "$op_count" '
 
 find "$TMP/home/schemas" -name '*.json' -print0 \
     | xargs -0 -n1 jq empty
+
+# A freshly initialized workspace must have ZERO files in the generated subdirs
+# beyond what the manifest tracks. Catches future drift where a new artifact
+# kind starts being written to disk but is not added to manifest.files[], or
+# where stale files survive a refresh because sweep_orphans missed a directory.
+disk_files="$TMP/disk.files"
+manifest_files="$TMP/manifest.files"
+gendirs_re="/(protocol|concepts|entities|operations|examples|workflows|indexes|schemas|guides)/"
+
+find "$TMP/home/protocol" "$TMP/home/concepts" "$TMP/home/entities" \
+     "$TMP/home/operations" "$TMP/home/examples" "$TMP/home/workflows" \
+     "$TMP/home/indexes" "$TMP/home/schemas" "$TMP/home/guides" \
+     -type f -print 2>/dev/null \
+    | sort >"$disk_files"
+
+jq -r --arg re "$gendirs_re" '.files[] | select(test($re))' "$TMP/home/manifest.json" \
+    | sort >"$manifest_files"
+
+if ! diff -u "$manifest_files" "$disk_files"; then
+    echo "freshly initialized workspace has files not tracked in manifest" >&2
+    exit 1
+fi

@@ -9,6 +9,7 @@
 
 #include <cJSON.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
@@ -22,7 +23,7 @@
 #include <unistd.h>
 
 #define IPMAN_AGENT_DOCS_GENERATOR_VERSION "1.0.0"
-#define IPMAN_AGENT_DOCS_CONTENT_REVISION "2026-04-29.1"
+#define IPMAN_AGENT_DOCS_CONTENT_REVISION "2026-05-05.2"
 
 typedef struct {
     const char *name;
@@ -153,7 +154,7 @@ static const OperationSpec k_operation_specs[] = {
     { "tool.update", "tool", "ongoing execution", "Update one or more fields of an active tool.", "id; plus at least one mutable field", "name, version_constraint, purpose, install_hint, required", "id must be positive; name, version_constraint, purpose, and install_hint must be non-empty when provided; required must be boolean. Omitted fields are left unchanged.", "The tool must exist and not be invalidated.", "Updates tool fields and emits tool_updated on the project.", "validation_failed, not_found, conflict, internal_error.", "result.tool.", "tool.list, tool.invalidate", "{\"id\":1,\"version_constraint\":\">=22\"}", "\"id\"", "tool" },
     { "workspace.context_get", "workspace_context", "inspect", "Read the active plan, current phase/task cursor, and the project block (name, description, tools, env_vars, project-scoped instructions) for this workspace.", "none", "reveal", "reveal must be boolean and defaults to false. When false, env_vars marked sensitive return example=\"[sensitive]\" or null instead of the stored example.", "Initialized workspace.", "No business data changes.", "validation_failed, internal_error.", "result.context (includes context.project with tools, env_vars, and instructions).", "plan.activate, phase.set_current, task.set_current, project.get, tool.list, env_var.list, instruction.list", "{\"reveal\":false}", "", "context" },
     { "workspace.export", "workspace", "audit/history", "Export the workspace-level registry (project metadata, tools, env_vars, project-scoped instructions, project-scoped events) as a canonical JSON snapshot. Companion to plan.export — together they cover the whole DB.", "none", "none", "params must be an object, normally empty.", "Initialized workspace.", "No business data changes; emits no events. env_var examples are returned unmasked because an export is a backup; the caller owns the resulting bytes.", "internal_error.", "result.export.", "plan.export, project.get, tool.list, env_var.list", "{}", "", "export" },
-    { "workspace.refresh_agent_docs", "workspace", "create/bootstrap", "Regenerate the agent knowledge pack in the effective IPMAN_HOME.", "none", "none", "params must be an object, normally empty.", "Effective home must be initialized and writable.", "Refreshes generated workspace artifacts only; it does not modify business data.", "internal_error on filesystem or rendering failure.", "result.workspace_root, db_path, files_total, files_written, files_unchanged, fingerprints.", "noop", "{}", "", "workspace_root, db_path, files_total, files_written, files_unchanged, generated_at, source_fingerprint, content_fingerprint" },
+    { "workspace.refresh_agent_docs", "workspace", "create/bootstrap", "Regenerate the agent knowledge pack in the effective IPMAN_HOME, evicting stale artifacts left over from previous binary versions to .ipman/.attic/<timestamp>/.", "none", "none", "params must be an object, normally empty.", "Effective home must be initialized and writable; .ipman/.attic must hold fewer files than IPMAN_ATTIC_LIMIT (default 100).", "Refreshes generated workspace artifacts and moves files in the generated subdirs that the current binary no longer emits to .ipman/.attic/<timestamp>/<rel-path>; it does not modify business data, the database, the keysalt, or the init lock.", "attic_full when .ipman/.attic exceeds IPMAN_ATTIC_LIMIT — clean .ipman/.attic and retry; internal_error on filesystem or rendering failure.", "result.workspace_root, db_path, files_total, files_written, files_unchanged, files_removed, attic_files_total, attic_dir, fingerprints.", "noop", "{}", "", "workspace_root, db_path, files_total, files_written, files_unchanged, files_removed, attic_files_total, attic_dir, generated_at, source_fingerprint, content_fingerprint" },
 };
 
 static const EntitySpec k_entity_specs[] = {
@@ -1531,6 +1532,30 @@ const char *ipman_agent_docs_operation_spec_name_at(int index) {
     return k_operation_specs[index].name;
 }
 
+#define IPMAN_ATTIC_DEFAULT_LIMIT 100L
+
+/* Parse IPMAN_ATTIC_LIMIT. Returns the configured limit; on missing, empty,
+ * or unparseable values, falls back to the default and logs once. The limit
+ * is the count of files under .attic/ at which the explicit
+ * workspace.refresh_agent_docs op refuses (returns IPMAN_ERR_ATTIC_FULL).
+ * The implicit refresh during open_workspace never enforces this cap, so
+ * exceeding it never bricks unrelated ops — only `refresh_agent_docs`
+ * itself fails until the operator removes .ipman/.attic. */
+static long resolve_attic_limit(void) {
+    const char *raw = getenv("IPMAN_ATTIC_LIMIT");
+    if (raw == NULL || raw[0] == '\0') return IPMAN_ATTIC_DEFAULT_LIMIT;
+    errno = 0;
+    char *endp = NULL;
+    long v = strtol(raw, &endp, 10);
+    if (errno != 0 || endp == raw || (endp != NULL && *endp != '\0') || v <= 0) {
+        ipman_log_warn("invalid IPMAN_ATTIC_LIMIT; using default",
+                      "value=\"%s\" default=%ld",
+                      raw, IPMAN_ATTIC_DEFAULT_LIMIT);
+        return IPMAN_ATTIC_DEFAULT_LIMIT;
+    }
+    return v;
+}
+
 /* Cached result of the most recent successful refresh in this process.
  * ipman_op_workspace_refresh_agent_docs reads from this so its reported
  * counts reflect the writes actually performed during this invocation,
@@ -1539,6 +1564,201 @@ const char *ipman_agent_docs_operation_spec_name_at(int index) {
  * not a concern. */
 static ipman_agent_docs_result_t g_last_refresh;
 static int g_have_last_refresh;
+
+static const char *k_sweep_dirs[] = {
+    "protocol", "concepts", "entities", "operations",
+    "examples", "workflows", "indexes", "schemas", "guides",
+};
+#define K_SWEEP_DIRS_COUNT (sizeof k_sweep_dirs / sizeof k_sweep_dirs[0])
+
+/* Recursively count regular files under <home>/.attic. Returns -1 only on
+ * unexpected I/O failures; if .attic does not exist yet, returns 0. */
+static int count_attic_files_under(const char *root) {
+    DIR *dir = opendir(root);
+    if (dir == NULL) {
+        if (errno == ENOENT) return 0;
+        ipman_log_error("attic opendir failed",
+                       "path=%s detail=\"%s\"", root, strerror(errno));
+        return -1;
+    }
+    int total = 0;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+            continue;
+        }
+        char child[PATH_MAX];
+        if (path_join(child, sizeof child, root, ent->d_name) != 0) continue;
+        struct stat st;
+        if (lstat(child, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            int sub = count_attic_files_under(child);
+            if (sub < 0) { closedir(dir); return -1; }
+            total += sub;
+        } else if (S_ISREG(st.st_mode)) {
+            ++total;
+        }
+    }
+    closedir(dir);
+    return total;
+}
+
+static int count_attic_files(const char *home) {
+    char attic_root[PATH_MAX];
+    if (path_join(attic_root, sizeof attic_root, home, ".attic") != 0) return -1;
+    return count_attic_files_under(attic_root);
+}
+
+/* Build a microsecond-precision UTC timestamp suitable for use as a directory
+ * name: "2026-05-05T02-15-30.123456Z". Microsecond precision avoids same-second
+ * collisions in CI loops; colons replaced with dashes for filesystem safety. */
+static int compact_iso_now(char out[40]) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return -1;
+    struct tm tm;
+    if (gmtime_r(&ts.tv_sec, &tm) == NULL) return -1;
+    int n = snprintf(out, 40, "%04d-%02d-%02dT%02d-%02d-%02d.%06ldZ",
+                    tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                    tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec / 1000);
+    return (n > 0 && n < 40) ? 0 : -1;
+}
+
+/* mkdir -p for a directory under home. Each component gets 0700. */
+static int ensure_dir_p(const char *path) {
+    char buf[PATH_MAX];
+    size_t len = strlen(path);
+    if (len >= sizeof buf) return -1;
+    memcpy(buf, path, len + 1);
+    for (size_t i = 1; i < len; ++i) {
+        if (buf[i] != '/') continue;
+        buf[i] = '\0';
+        if (ensure_dir(buf) != 0) return -1;
+        buf[i] = '/';
+    }
+    return ensure_dir(buf);
+}
+
+/* Move files in the generated subdirs that are not in the artifact list to
+ * <home>/.attic/<timestamp>/<rel-path>. Closes the inter-version drift gap:
+ * a binary that no longer emits an artifact (op renamed/removed, entity
+ * renamed, workflow renamed) would otherwise leave the previous version's
+ * file on disk forever, since the write loop only writes.
+ *
+ * Eviction (rather than unlink) keeps the data recoverable until the user
+ * reviews the leftovers and removes .attic explicitly — see
+ * IPMAN_ATTIC_LIMIT enforcement in the workspace.refresh_agent_docs handler.
+ *
+ * Scope is deliberately narrow: only the 9 directories that ensure_subdirs
+ * creates. The home root itself is NOT enumerated, because that is where
+ * ipman.db, keysalt, and .init.lock live alongside our artifacts.
+ *
+ * On success returns the number of files moved and writes the timestamp
+ * subdir name (no leading path) into attic_dir_out; if zero files moved,
+ * attic_dir_out[0] is set to '\0' and no .attic directory is created.
+ * Returns -1 on failure.
+ */
+static int evict_to_attic(const char *home, const ArtifactList *list,
+                          char attic_dir_out[40]) {
+    attic_dir_out[0] = '\0';
+
+    char ts[40];
+    if (compact_iso_now(ts) != 0) return -1;
+
+    int moved = 0;
+    char attic_run_dir[PATH_MAX] = "";
+
+    for (size_t d = 0; d < K_SWEEP_DIRS_COUNT; ++d) {
+        char dir_path[PATH_MAX];
+        if (path_join(dir_path, sizeof dir_path, home, k_sweep_dirs[d]) != 0) {
+            return -1;
+        }
+        DIR *dir = opendir(dir_path);
+        if (dir == NULL) {
+            if (errno == ENOENT) continue;
+            ipman_log_error("sweep opendir failed",
+                           "path=%s detail=\"%s\"",
+                           dir_path, strerror(errno));
+            return -1;
+        }
+
+        struct dirent *ent;
+        while ((ent = readdir(dir)) != NULL) {
+            if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+                continue;
+            }
+            char rel[PATH_MAX];
+            int n = snprintf(rel, sizeof rel, "%s/%s", k_sweep_dirs[d], ent->d_name);
+            if (n < 0 || (size_t)n >= sizeof rel) continue;
+
+            int expected = 0;
+            for (size_t i = 0; i < list->len; ++i) {
+                if (strcmp(list->items[i].rel_path, rel) == 0) {
+                    expected = 1;
+                    break;
+                }
+            }
+            if (expected) continue;
+
+            char src_full[PATH_MAX];
+            if (path_join(src_full, sizeof src_full, home, rel) != 0) continue;
+            struct stat st;
+            if (lstat(src_full, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+
+            /* Lazily create the run directory only when we have something to
+             * move. Avoids polluting .attic with empty timestamp subdirs on
+             * routine refreshes that find no orphans. */
+            if (attic_run_dir[0] == '\0') {
+                int rn = snprintf(attic_run_dir, sizeof attic_run_dir,
+                                 "%s/.attic/%s", home, ts);
+                if (rn < 0 || (size_t)rn >= sizeof attic_run_dir) {
+                    closedir(dir);
+                    return -1;
+                }
+                if (ensure_dir_p(attic_run_dir) != 0) {
+                    ipman_log_error("attic mkdir failed",
+                                   "path=%s detail=\"%s\"",
+                                   attic_run_dir, strerror(errno));
+                    closedir(dir);
+                    return -1;
+                }
+            }
+
+            char dest_subdir[PATH_MAX];
+            int sn = snprintf(dest_subdir, sizeof dest_subdir,
+                             "%s/%s", attic_run_dir, k_sweep_dirs[d]);
+            if (sn < 0 || (size_t)sn >= sizeof dest_subdir) {
+                closedir(dir);
+                return -1;
+            }
+            if (ensure_dir_p(dest_subdir) != 0) {
+                closedir(dir);
+                return -1;
+            }
+            char dest_full[PATH_MAX];
+            int dn = snprintf(dest_full, sizeof dest_full,
+                             "%s/%s", dest_subdir, ent->d_name);
+            if (dn < 0 || (size_t)dn >= sizeof dest_full) {
+                closedir(dir);
+                return -1;
+            }
+            if (rename(src_full, dest_full) != 0) {
+                ipman_log_error("attic rename failed",
+                               "src=%s dest=%s detail=\"%s\"",
+                               src_full, dest_full, strerror(errno));
+                closedir(dir);
+                return -1;
+            }
+            ++moved;
+        }
+        closedir(dir);
+    }
+    if (moved > 0) {
+        size_t tslen = strlen(ts);
+        if (tslen >= 40) return -1;
+        memcpy(attic_dir_out, ts, tslen + 1);
+    }
+    return moved;
+}
 
 int ipman_agent_docs_refresh(const char *home,
                             const char *db_path,
@@ -1581,10 +1801,28 @@ int ipman_agent_docs_refresh(const char *home,
         else ++unchanged;
     }
 
+    /* Evict last: if the binary crashes mid-refresh the workspace stays
+     * complete (every expected file is already on disk), and only the
+     * leftover files from a previous version are at risk of surviving. */
+    char attic_dir[40] = {0};
+    int removed = evict_to_attic(home, &list, attic_dir);
+    if (removed < 0) {
+        artifacts_free(&list);
+        return -1;
+    }
+    int attic_total = count_attic_files(home);
+    if (attic_total < 0) {
+        artifacts_free(&list);
+        return -1;
+    }
+
     ipman_agent_docs_result_t snapshot = {0};
     snapshot.files_total = (int)list.len;
     snapshot.files_written = written;
     snapshot.files_unchanged = unchanged;
+    snapshot.files_removed = removed;
+    snapshot.attic_files_total = attic_total;
+    memcpy(snapshot.attic_dir, attic_dir, sizeof snapshot.attic_dir);
     snprintf(snapshot.generated_at, sizeof snapshot.generated_at, "%s", generated_at);
     snprintf(snapshot.source_fingerprint, sizeof snapshot.source_fingerprint, "%s", source_fp);
     snprintf(snapshot.content_fingerprint, sizeof snapshot.content_fingerprint, "%s", content_fp);
@@ -1644,9 +1882,32 @@ int ipman_op_workspace_refresh_agent_docs(const ipman_request_t *req,
     }
     cJSON_AddStringToObject(result, "workspace_root", home);
     cJSON_AddStringToObject(result, "db_path", db_path);
+    long limit = resolve_attic_limit();
+    long warn = limit / 2;
+    if (warn < 1) warn = 1;
+    if (refresh.attic_files_total >= limit) {
+        ipman_log_error("attic limit exceeded — refusing explicit refresh",
+                       "attic=%d limit=%ld",
+                       refresh.attic_files_total, limit);
+        cJSON_Delete(result);
+        *err_code_out = IPMAN_ERR_ATTIC_FULL;
+        *err_msg_out = "attic exceeds limit; review .ipman/.attic and "
+                       "remove it (or raise IPMAN_ATTIC_LIMIT) before "
+                       "the next refresh";
+        return -1;
+    }
+    if (refresh.attic_files_total >= warn) {
+        ipman_log_warn("attic approaching limit",
+                      "attic=%d warn=%ld limit=%ld",
+                      refresh.attic_files_total, warn, limit);
+    }
+
     cJSON_AddNumberToObject(result, "files_total", refresh.files_total);
     cJSON_AddNumberToObject(result, "files_written", refresh.files_written);
     cJSON_AddNumberToObject(result, "files_unchanged", refresh.files_unchanged);
+    cJSON_AddNumberToObject(result, "files_removed", refresh.files_removed);
+    cJSON_AddNumberToObject(result, "attic_files_total", refresh.attic_files_total);
+    cJSON_AddStringToObject(result, "attic_dir", refresh.attic_dir);
     cJSON_AddStringToObject(result, "generated_at", refresh.generated_at);
     cJSON_AddStringToObject(result, "source_fingerprint", refresh.source_fingerprint);
     cJSON_AddStringToObject(result, "content_fingerprint", refresh.content_fingerprint);

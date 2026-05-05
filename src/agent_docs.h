@@ -18,6 +18,9 @@ typedef struct {
     int files_total;
     int files_written;
     int files_unchanged;
+    int files_removed;          /* moved to .attic on this invocation */
+    int attic_files_total;      /* total files under .attic after this run */
+    char attic_dir[40];         /* timestamp subdir name; empty if 0 moved */
     char generated_at[32];
     char source_fingerprint[32];
     char content_fingerprint[32];
