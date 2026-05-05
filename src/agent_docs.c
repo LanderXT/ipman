@@ -23,7 +23,7 @@
 #include <unistd.h>
 
 #define IPMAN_AGENT_DOCS_GENERATOR_VERSION "1.0.0"
-#define IPMAN_AGENT_DOCS_CONTENT_REVISION "2026-05-05.3"
+#define IPMAN_AGENT_DOCS_CONTENT_REVISION "2026-05-05.4"
 
 typedef struct {
     const char *name;
@@ -1325,6 +1325,7 @@ static char *render_best_practices_doc(const char *generated_at) {
         "Files with identical content are not rewritten. "
         "Running `ipman init` does not delete data, reset cursors, or modify business records. "
         "Run it after upgrading the binary to pick up new migrations and documentation.\n\n"
+        "**One caveat (since v2.4.2):** when cwd is inside a git repository but NOT at the repo root (e.g. a subdir, or a subdir of a worktree), `ipman init` refuses with `validation_failed` rather than planting a stray `.ipman/` alongside cwd. The error message names the cwd-relative path of the repo root so you know where to `cd` to. The escape hatch is `IPMAN_HOME=<path> ipman init`, which bypasses discovery entirely. Other ops (reads and writes) auto-discover the repo-root `.ipman/` and operate against it — no agent intervention needed when running from a subdir.\n\n"
         "## 11. Initialize a git repository if the codebase does not have one\n\n"
         "If the working directory has no git repository (local or remote), initialize one with `git init`. "
         "Add the following to `.gitignore`:\n\n"

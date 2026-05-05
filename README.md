@@ -254,7 +254,7 @@ IPMAN_BIN=$(which ipman) \
 python3 mcp/ipman_mcp.py
 ```
 
-The bridge reads `manifest.json` once at startup, builds one MCP tool per registered operation (65 of them after `ipman init`), and forwards `tools/call` invocations as JSON envelopes to the `ipman` binary. No third-party Python deps; Python 3.10+ required for the type-hint syntax. See [`mcp/README.md`](mcp/README.md) for client-config snippets and troubleshooting.
+The bridge reads `manifest.json` once at startup, builds one MCP tool per registered operation (76 of them after `ipman init`), and forwards `tools/call` invocations as JSON envelopes to the `ipman` binary. No third-party Python deps; Python 3.10+ required for the type-hint syntax. See [`mcp/README.md`](mcp/README.md) for client-config snippets and troubleshooting.
 
 ## Security
 
