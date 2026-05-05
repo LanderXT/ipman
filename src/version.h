@@ -16,10 +16,12 @@
  * UTF-8 slug transliteration, refactors --usage to a byte-array embed,
  * and ships --import-plan with saga rollback; v2.4.1 closes the
  * orphan-doc drift gap by evicting stale agent-docs to .ipman/.attic
- * with refuse-on-limit. All releases stay wire-additive at
- * protocol_version: 2. See docs/v2.4-slug-import-docs.md and
- * docs/v2.4.1-attic-sweep.md for the most recent changes.
+ * with refuse-on-limit; v2.4.2 closes the silent-fork hazard by
+ * walking upward from cwd to find the repo root and refusing `init`
+ * from a subdir or worktree subdir. All releases stay wire-additive
+ * at protocol_version: 2. See docs/v2.4.X-*.md for the most recent
+ * changes.
  */
-#define IPMAN_VERSION "2.4.1"
+#define IPMAN_VERSION "2.4.2"
 
 #endif
