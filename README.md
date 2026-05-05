@@ -478,16 +478,17 @@ The "single source of truth" pattern is deliberate: the dispatch table in `src/d
 
 ## Status and roadmap
 
-**v2.2.0** — current release. Stable surfaces:
+**v2.4.1** — current release. Stable surfaces:
 
-- JSON request/response protocol at `protocol_version: 2` (unchanged from v2.0; v2.1/v2.2 added zero protocol ops)
-- All 76 operations across 13 entities
+- JSON request/response protocol at `protocol_version: 2` (unchanged from v2.0; every release since has been wire-additive)
+- All 76 operations across 13 entities (`plan`, `phase`, `task`, `comment`, `instruction`, `event`, `closure_record`, `task_relation`, `project`, `tool`, `env_var`, `workspace`, `workspace_context`)
 - Encrypted SQLite storage layout (SQLCipher + Argon2id)
-- `.ipman/` generated documentation tree (regenerated on every `init`)
+- `.ipman/` generated documentation tree (regenerated on every `init`); stale artifacts from older binary versions evict to `.ipman/.attic/<timestamp>/` with `IPMAN_ATTIC_LIMIT` (default 100) capping growth
 - Bundled Claude Code skill (also installed for Codex)
-- Optional MCP server (`mcp/ipman_mcp.py`) for MCP-aware clients
-- CLI shortcuts (1:1 wrappers over a JSON op): `--start`, `--close`, `--cancel`, `--defer`, `--close-phase`, `--cancel-phase`, `--current`, `--activate`, `--show`, `--log`, plus the `--dry-run` modifier; CLI views (compose multiple ops): `--status`, `--ls`, `--next`, `--render` (see [`docs/v2.1-ergonomics.md`](docs/v2.1-ergonomics.md) and [`docs/v2.2-ergonomics.md`](docs/v2.2-ergonomics.md))
+- Optional MCP server (`mcp/ipman_mcp.py`) for MCP-aware clients — exposes the 76 ops as MCP tools by reading `manifest.json`
+- CLI shortcuts (1:1 wrappers over a JSON op): `--start`, `--close`, `--cancel`, `--defer`, `--close-phase`, `--cancel-phase`, `--current`, `--activate`, `--show`, `--log`, `--import-plan`, plus the `--dry-run` modifier; CLI views (compose multiple ops): `--status`, `--ls`, `--next`, `--render` (see the per-release docs linked below)
 - Structured closure evidence: `validations_run` and `decisions` on `task.close`, plus auto-captured git context (`commit_sha`, `dirty`, `files_changed`) when running inside a work tree
+- UTF-8-aware slug generation (Latin-1 Supplement + Latin Extended-A transliteration)
 
 Planned (no commitment yet):
 
@@ -495,8 +496,10 @@ Planned (no commitment yet):
 - Codex skill parity tests
 - Optional plain-SQLite mode for environments where SQLCipher is hard to install
 - Additional task relationship types (`blocks`, `informs`, …)
+- Sub-tasks UX surface (`parent_task_id` already in schema since v2.0; only `task.list` filter, `--next` render, and creation shortcut deferred)
+- Parity test for the `Known error codes` enumeration in the envelope doc
 
-Breaking wire changes bump `protocol_version` and ship a migration; the v1 → v2 cutover is documented in [`docs/v2-migration.md`](docs/v2-migration.md). v2.1 and v2.2 were purely additive over v2.0 — no wire changes, no client migration required.
+Breaking wire changes bump `protocol_version` and ship a migration; the v1 → v2 cutover is documented in [`docs/v2-migration.md`](docs/v2-migration.md). v2.1, v2.2, v2.3, and v2.4 are all purely additive over v2.0 — no wire changes, no client migration required. Per-release notes: [v2.1](docs/v2.1-ergonomics.md), [v2.2](docs/v2.2-ergonomics.md), [v2.3](docs/v2.3-tools-and-env-vars.md), [v2.4](docs/v2.4-slug-import-docs.md), [v2.4.1](docs/v2.4.1-attic-sweep.md).
 
 ## Contributing
 
