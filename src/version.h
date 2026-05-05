@@ -18,10 +18,14 @@
  * orphan-doc drift gap by evicting stale agent-docs to .ipman/.attic
  * with refuse-on-limit; v2.4.2 closes the silent-fork hazard by
  * walking upward from cwd to find the repo root and refusing `init`
- * from a subdir or worktree subdir. All releases stay wire-additive
- * at protocol_version: 2. See docs/v2.4.X-*.md for the most recent
- * changes.
+ * from a subdir or worktree subdir; v2.4.3 hardens the migration
+ * window — toggles foreign_keys around each migration's transaction
+ * (unblocks v3->v4 upgrades on populated DBs), runs pre-flight
+ * integrity_check + foreign_key_check before mutating, and snapshots
+ * ipman.db to ipman.db.bak-v<current> before applying pending
+ * migrations. All releases stay wire-additive at protocol_version: 2.
+ * See docs/v2.4.X-*.md for the most recent changes.
  */
-#define IPMAN_VERSION "2.4.2"
+#define IPMAN_VERSION "2.4.3"
 
 #endif

@@ -213,7 +213,7 @@ static int open_workspace(sqlite3 **db_out, char *home, size_t home_len,
     }
 
     int schema_version = 0;
-    if (ipman_migrations_apply(db, &schema_version) != 0) {
+    if (ipman_migrations_apply(db, dbpath, &schema_version) != 0) {
         ipman_db_close(db);
         return emit_fatal(NULL, IPMAN_ERR_INTERNAL, "migration apply failed");
     }

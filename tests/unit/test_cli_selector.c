@@ -416,7 +416,7 @@ static int bootstrap_workspace(char *home, size_t home_size, sqlite3 **db_out) {
         fprintf(stderr, "ipman_db_open failed\n"); return -1;
     }
     int version = 0;
-    if (ipman_migrations_apply(db, &version) != 0) {
+    if (ipman_migrations_apply(db, NULL, &version) != 0) {
         fprintf(stderr, "ipman_migrations_apply failed\n");
         ipman_db_close(db);
         return -1;

@@ -200,6 +200,16 @@ $(BUILD_DIR)/tests/test_slugify: tests/unit/test_slugify.c \
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(SQLCIPHER_CFLAGS) $(SODIUM_CFLAGS) -Ithird_party/cjson -Isrc -o $@ $^
 
+# test_migration_upgrade exercises ipman_migrations_apply on a populated
+# v3 database. Links migrations.o + its embedded SQL data + log.o, plus
+# SQLCipher (for sqlite3_*) and libsodium (transitive dep of SQLCipher).
+$(BUILD_DIR)/tests/test_migration_upgrade: tests/unit/test_migration_upgrade.c \
+		$(BUILD_DIR)/migrations.o \
+		$(BUILD_DIR)/log.o \
+		$(GEN_OBJ)
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(SQLCIPHER_CFLAGS) $(SODIUM_CFLAGS) -Isrc -o $@ $^ $(LDLIBS)
+
 unit: $(UNIT_BIN)
 	@set -e; for t in $(UNIT_BIN); do \
 		echo "--- $$t ---"; \

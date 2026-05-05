@@ -43,9 +43,20 @@ extern const size_t                ipman_migrations_count;
  * stored checksum does not match the embedded one is also a fatal
  * error (migrations are append-only).
  *
+ * Before applying anything, a pre-flight check runs PRAGMA
+ * integrity_check and PRAGMA foreign_key_check on the existing DB and
+ * aborts with non-zero if either reports trouble — this guards against
+ * mutating an already-corrupted database.
+ *
+ * If `db_path` is non-NULL AND there are pending migrations to apply,
+ * a snapshot of `db_path` is copied to `<db_path>.bak-v<current>`
+ * before the first migration runs. Subsequent invocations at the same
+ * source-version overwrite the backup. Pass NULL to skip the backup
+ * (useful for tests that operate on temp/in-memory DBs).
+ *
  * On success, writes the resulting schema version into *out_version and
  * returns 0.
  */
-int ipman_migrations_apply(sqlite3 *db, int *out_version);
+int ipman_migrations_apply(sqlite3 *db, const char *db_path, int *out_version);
 
 #endif
