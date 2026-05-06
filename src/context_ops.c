@@ -44,6 +44,7 @@
 #include "context_ops.h"
 #include "db.h"
 #include "env_var_ops.h"
+#include "git_helpers.h"
 #include "json_helpers.h"
 #include "project_ops.h"
 #include "phase_ops.h"
@@ -585,6 +586,28 @@ static int upsert_workspace_context(sqlite3 *db,
     return rc == SQLITE_DONE ? 0 : -1;
 }
 
+static int upsert_branch_context(sqlite3 *db,
+                                 const char *branch_name,
+                                 sqlite3_int64 plan_id,
+                                 const char *actor) {
+    const char *sql =
+        "INSERT INTO branch_contexts(branch_name, active_plan_id, updated_by) "
+        "VALUES(?1, ?2, ?3) "
+        "ON CONFLICT(branch_name) DO UPDATE SET "
+        "active_plan_id = excluded.active_plan_id, "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), "
+        "updated_by = excluded.updated_by;";
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return -1;
+    sqlite3_bind_text(stmt, 1, branch_name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 2, plan_id);
+    sqlite3_bind_text(stmt, 3, actor, -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_DONE ? 0 : -1;
+}
+
 static int insert_context_event(sqlite3 *db,
                                 sqlite3_int64 plan_id,
                                 const char *event_type,
@@ -785,6 +808,18 @@ int ipman_op_plan_activate(const ipman_request_t *req, sqlite3 *db,
         *err_code_out = IPMAN_ERR_INTERNAL;
         *err_msg_out = "failed to activate plan";
         return -1;
+    }
+    /* Bind current git branch → this plan. Best-effort: not in a git
+     * repo and detached HEAD are silent non-errors. */
+    char branch[256];
+    if (ipman_git_current_branch(branch, sizeof branch) == 0) {
+        if (upsert_branch_context(db, branch, plan_id, req->actor) != 0) {
+            cJSON_Delete(old_context);
+            run_sql(db, "ROLLBACK;");
+            *err_code_out = IPMAN_ERR_INTERNAL;
+            *err_msg_out = "failed to record branch binding";
+            return -1;
+        }
     }
     if (ipman_context_repair_plan_cursor(db, req, plan_id,
                                         "{\"op\":\"plan.activate\"}",
