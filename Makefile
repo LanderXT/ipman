@@ -164,6 +164,7 @@ CLI_SELECTOR_TEST_OBJS := \
     $(BUILD_DIR)/env_var_ops.o \
     $(BUILD_DIR)/event_ops.o \
     $(BUILD_DIR)/export_ops.o \
+    $(BUILD_DIR)/git_helpers.o \
     $(BUILD_DIR)/instruction_ops.o \
     $(BUILD_DIR)/ipman_home.o \
     $(BUILD_DIR)/ipman_key.o \
