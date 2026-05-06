@@ -23,9 +23,16 @@
  * (unblocks v3->v4 upgrades on populated DBs), runs pre-flight
  * integrity_check + foreign_key_check before mutating, and snapshots
  * ipman.db to ipman.db.bak-v<current> before applying pending
- * migrations. All releases stay wire-additive at protocol_version: 2.
- * See docs/v2.4.X-*.md for the most recent changes.
+ * migrations. v2.5 adds branch-aware workspace context: a new
+ * branch_contexts table (migration 0006), ipman_git_current_branch reads
+ * .git/HEAD without spawning a subprocess, plan.activate upserts a git
+ * branch → plan binding, workspace.context_get auto-switches the active
+ * plan when the user changes branches, and two new ops
+ * (workspace.list_branch_bindings, workspace.unbind_branch) expose the
+ * bindings for inspection and cleanup. The -N handoff view shows the
+ * current branch and binding status. All releases stay wire-additive at
+ * protocol_version: 2. See docs/ for per-release notes.
  */
-#define IPMAN_VERSION "2.4.3"
+#define IPMAN_VERSION "2.5.0"
 
 #endif
