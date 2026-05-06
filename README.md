@@ -132,7 +132,7 @@ That is the full feedback loop: the agent edits the plan, you read it with `-N`,
 
 The same data is reachable three ways. Pick the one that fits the call site:
 
-- **`ops`** — the **JSON request/response protocol**. The complete, canonical surface: 76 operations (`plan.create`, `task.transition`, `closure.get`, …) covering every read and every mutation. This is what AI agents and scripts call: `… | ipman` with a JSON envelope on stdin, JSON on stdout, exit code via [error semantics](#error-semantics).
+- **`ops`** — the **JSON request/response protocol**. The complete, canonical surface: 78 operations (`plan.create`, `task.transition`, `closure.get`, …) covering every read and every mutation. This is what AI agents and scripts call: `… | ipman` with a JSON envelope on stdin, JSON on stdout, exit code via [error semantics](#error-semantics).
 - **`shortcuts`** — CLI verbs that wrap a single op apiece. `ipman --start`, `ipman --close`, `ipman --defer`, `ipman --show`, `ipman --log`, `ipman --current`, `ipman --activate`, etc. Each shortcut is exactly one op under the hood, so the audit trail is identical to the agent-driven path. Use them when supervising directly without hand-rolling JSON.
 - **`views`** — CLI verbs that compose several ops into one rendered display. `ipman -S` (status), `ipman -L` (ls), `ipman -N` (next), `ipman -R` (render). `-N` is the canonical handoff view: it replaces the typical `workspace.context_get` + `plan.get` + `phase.get` + `task.get` + `instruction.list` (×3 scopes) + `task.list` sequence with one call. Views save typing for the operator; agents that need the constituent data should call the underlying ops directly.
 
@@ -207,7 +207,7 @@ Response:
   "created_at":"2026-04-30T12:33:11.373Z", ...}}}
 ```
 
-Use `ipman --b64` when shell escaping is awkward — stdin and stdout become base64-encoded JSON. The full operation surface (76 ops across 13 entities) is enumerated under [Operations reference](#operations-reference).
+Use `ipman --b64` when shell escaping is awkward — stdin and stdout become base64-encoded JSON. The full operation surface (78 ops across 13 entities) is enumerated under [Operations reference](#operations-reference).
 
 ### How agents discover the API
 
@@ -254,7 +254,7 @@ IPMAN_BIN=$(which ipman) \
 python3 mcp/ipman_mcp.py
 ```
 
-The bridge reads `manifest.json` once at startup, builds one MCP tool per registered operation (76 of them after `ipman init`), and forwards `tools/call` invocations as JSON envelopes to the `ipman` binary. No third-party Python deps; Python 3.10+ required for the type-hint syntax. See [`mcp/README.md`](mcp/README.md) for client-config snippets and troubleshooting.
+The bridge reads `manifest.json` once at startup, builds one MCP tool per registered operation (78 of them after `ipman init`), and forwards `tools/call` invocations as JSON envelopes to the `ipman` binary. No third-party Python deps; Python 3.10+ required for the type-hint syntax. See [`mcp/README.md`](mcp/README.md) for client-config snippets and troubleshooting.
 
 ## Security
 
@@ -396,7 +396,7 @@ ipman --close review-pr-42 \
 
 ## Operations reference
 
-The runtime exposes 76 operations across 13 entities. The full, always-current list lives at `.ipman/indexes/ipman.index.operations.md` after init; here is the shape:
+The runtime exposes 78 operations across 13 entities. The full, always-current list lives at `.ipman/indexes/ipman.index.operations.md` after init; here is the shape:
 
 | Entity | Common verbs |
 |---|---|
@@ -481,12 +481,12 @@ The "single source of truth" pattern is deliberate: the dispatch table in `src/d
 **v2.4.2** — current release. Stable surfaces:
 
 - JSON request/response protocol at `protocol_version: 2` (unchanged from v2.0; every release since has been wire-additive)
-- All 76 operations across 13 entities (`plan`, `phase`, `task`, `comment`, `instruction`, `event`, `closure_record`, `task_relation`, `project`, `tool`, `env_var`, `workspace`, `workspace_context`)
+- All 78 operations across 13 entities (`plan`, `phase`, `task`, `comment`, `instruction`, `event`, `closure_record`, `task_relation`, `project`, `tool`, `env_var`, `workspace`, `workspace_context`)
 - Encrypted SQLite storage layout (SQLCipher + Argon2id)
 - Workspace discovery walks cwd upward to find the repo root (handles subdirs, git worktrees) so an agent in `proyecto/src/` resolves to `proyecto/.ipman/`, not a stray subdir-local one; `init` refuses from a subdir to prevent silent forks. `IPMAN_HOME` remains the explicit escape hatch.
 - `.ipman/` generated documentation tree (regenerated on every `init`); stale artifacts from older binary versions evict to `.ipman/.attic/<timestamp>/` with `IPMAN_ATTIC_LIMIT` (default 100) capping growth
 - Bundled Claude Code skill (also installed for Codex)
-- Optional MCP server (`mcp/ipman_mcp.py`) for MCP-aware clients — exposes the 76 ops as MCP tools by reading `manifest.json`
+- Optional MCP server (`mcp/ipman_mcp.py`) for MCP-aware clients — exposes the 78 ops as MCP tools by reading `manifest.json`
 - CLI shortcuts (1:1 wrappers over a JSON op): `--start`, `--close`, `--cancel`, `--defer`, `--close-phase`, `--cancel-phase`, `--current`, `--activate`, `--show`, `--log`, `--import-plan`, plus the `--dry-run` modifier; CLI views (compose multiple ops): `--status`, `--ls`, `--next`, `--render` (see the per-release docs linked below)
 - Structured closure evidence: `validations_run` and `decisions` on `task.close`, plus auto-captured git context (`commit_sha`, `dirty`, `files_changed`) when running inside a work tree
 - UTF-8-aware slug generation (Latin-1 Supplement + Latin Extended-A transliteration)

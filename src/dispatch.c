@@ -118,9 +118,11 @@ static const ipman_op_t k_ops[] = {
     { "tool.invalidate",              ipman_op_tool_invalidate,                 ipman_op_tool_invalidate_params },
     { "tool.list",                    ipman_op_tool_list,                       ipman_op_tool_list_params },
     { "tool.update",                  ipman_op_tool_update,                     ipman_op_tool_update_params },
-    { "workspace.context_get",        ipman_op_workspace_context_get,           ipman_op_workspace_context_get_params },
-    { "workspace.export",             ipman_op_workspace_export,                ipman_op_workspace_export_params },
-    { "workspace.refresh_agent_docs", ipman_op_workspace_refresh_agent_docs,    ipman_op_workspace_refresh_agent_docs_params },
+    { "workspace.context_get",           ipman_op_workspace_context_get,              ipman_op_workspace_context_get_params },
+    { "workspace.export",                ipman_op_workspace_export,                   ipman_op_workspace_export_params },
+    { "workspace.list_branch_bindings",  ipman_op_workspace_list_branch_bindings,     ipman_op_workspace_list_branch_bindings_params },
+    { "workspace.refresh_agent_docs",    ipman_op_workspace_refresh_agent_docs,       ipman_op_workspace_refresh_agent_docs_params },
+    { "workspace.unbind_branch",         ipman_op_workspace_unbind_branch,            ipman_op_workspace_unbind_branch_params },
 };
 
 size_t ipman_dispatch_operation_count(void) {
