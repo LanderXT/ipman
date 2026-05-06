@@ -210,6 +210,13 @@ $(BUILD_DIR)/tests/test_migration_upgrade: tests/unit/test_migration_upgrade.c \
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(SQLCIPHER_CFLAGS) $(SODIUM_CFLAGS) -Isrc -o $@ $^ $(LDLIBS)
 
+$(BUILD_DIR)/tests/test_git_helpers: tests/unit/test_git_helpers.c \
+		$(BUILD_DIR)/git_helpers.o \
+		$(BUILD_DIR)/ipman_home.o \
+		$(BUILD_DIR)/log.o
+	@mkdir -p $(@D)
+	$(CC) $(CFLAGS) $(SQLCIPHER_CFLAGS) $(SODIUM_CFLAGS) -Isrc -o $@ $^ $(LDLIBS)
+
 unit: $(UNIT_BIN)
 	@set -e; for t in $(UNIT_BIN); do \
 		echo "--- $$t ---"; \
