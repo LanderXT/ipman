@@ -422,6 +422,8 @@ static cJSON *load_active_env_vars(sqlite3 *db, int reveal) {
 }
 
 static cJSON *load_context_with_requirements(sqlite3 *db, int reveal_env);
+static int lookup_branch_plan(sqlite3 *db, const char *branch_name, sqlite3_int64 *out);
+static int plan_is_nonterminal(sqlite3 *db, sqlite3_int64 plan_id);
 
 static cJSON *load_context(sqlite3 *db) {
     return load_context_with_requirements(db, /*reveal_env=*/0);
@@ -446,21 +448,57 @@ static cJSON *load_context_with_requirements(sqlite3 *db, int reveal_env) {
     sqlite3_int64 active_plan_id = 0;
     sqlite3_int64 current_phase_id = 0;
     sqlite3_int64 current_task_id = 0;
-    if (sqlite3_column_type(stmt, 0) != SQLITE_NULL) {
+    if (sqlite3_column_type(stmt, 0) != SQLITE_NULL)
         active_plan_id = sqlite3_column_int64(stmt, 0);
-    }
-    if (sqlite3_column_type(stmt, 3) != SQLITE_NULL) {
+    if (sqlite3_column_type(stmt, 3) != SQLITE_NULL)
         current_phase_id = sqlite3_column_int64(stmt, 3);
-    }
-    if (sqlite3_column_type(stmt, 4) != SQLITE_NULL) {
+    if (sqlite3_column_type(stmt, 4) != SQLITE_NULL)
         current_task_id = sqlite3_column_int64(stmt, 4);
+    /* Copy text columns before finalize: sqlite3_column_text pointers are
+     * only valid until the next step or finalize. */
+    char ws_ua[64] = {0}, ws_ub[64] = {0}, pc_ua[64] = {0}, pc_ub[64] = {0};
+    const unsigned char *t;
+    if ((t = sqlite3_column_text(stmt, 1))) snprintf(ws_ua, sizeof ws_ua, "%s", (const char *)t);
+    if ((t = sqlite3_column_text(stmt, 2))) snprintf(ws_ub, sizeof ws_ub, "%s", (const char *)t);
+    if ((t = sqlite3_column_text(stmt, 5))) snprintf(pc_ua, sizeof pc_ua, "%s", (const char *)t);
+    if ((t = sqlite3_column_text(stmt, 6))) snprintf(pc_ub, sizeof pc_ub, "%s", (const char *)t);
+    sqlite3_finalize(stmt);
+    stmt = NULL;
+
+    /* Branch override: if we can detect the current git branch and it
+     * has a live binding, that plan takes precedence over the global
+     * workspace_context.active_plan_id. Stale bindings (terminal plans)
+     * are silently skipped. */
+    char git_branch[256] = {0};
+    int branch_bound = 0;
+    if (ipman_git_current_branch(git_branch, sizeof git_branch) == 0) {
+        sqlite3_int64 branch_plan_id = 0;
+        if (lookup_branch_plan(db, git_branch, &branch_plan_id) == 0 &&
+            branch_plan_id != 0 &&
+            plan_is_nonterminal(db, branch_plan_id)) {
+            active_plan_id = branch_plan_id;
+            branch_bound = 1;
+            /* Re-read phase/task cursors from the branch plan's context,
+             * since they may differ from the global workspace cursor. */
+            const char *cursor_sql =
+                "SELECT current_phase_id, current_task_id "
+                "FROM plan_contexts WHERE plan_id = ?1;";
+            sqlite3_stmt *cs = NULL;
+            if (sqlite3_prepare_v2(db, cursor_sql, -1, &cs, NULL) == SQLITE_OK) {
+                sqlite3_bind_int64(cs, 1, branch_plan_id);
+                if (sqlite3_step(cs) == SQLITE_ROW) {
+                    current_phase_id = (sqlite3_column_type(cs, 0) != SQLITE_NULL)
+                                       ? sqlite3_column_int64(cs, 0) : 0;
+                    current_task_id  = (sqlite3_column_type(cs, 1) != SQLITE_NULL)
+                                       ? sqlite3_column_int64(cs, 1) : 0;
+                }
+                sqlite3_finalize(cs);
+            }
+        }
     }
 
     cJSON *context = cJSON_CreateObject();
-    if (context == NULL) {
-        sqlite3_finalize(stmt);
-        return NULL;
-    }
+    if (context == NULL) return NULL;
     if (active_plan_id == 0) {
         cJSON_AddNullToObject(context, "active_plan_id");
     } else {
@@ -478,11 +516,12 @@ static cJSON *load_context_with_requirements(sqlite3 *db, int reveal_env) {
         cJSON_AddNumberToObject(context, "current_task_id",
                                 (double)current_task_id);
     }
-    ipman_json_add_text_or_null(context, "workspace_updated_at", sqlite3_column_text(stmt, 1));
-    ipman_json_add_text_or_null(context, "workspace_updated_by", sqlite3_column_text(stmt, 2));
-    ipman_json_add_text_or_null(context, "plan_context_updated_at", sqlite3_column_text(stmt, 5));
-    ipman_json_add_text_or_null(context, "plan_context_updated_by", sqlite3_column_text(stmt, 6));
-    sqlite3_finalize(stmt);
+    ipman_json_add_text_or_null(context, "workspace_updated_at", ws_ua[0] ? (const unsigned char *)ws_ua : NULL);
+    ipman_json_add_text_or_null(context, "workspace_updated_by", ws_ub[0] ? (const unsigned char *)ws_ub : NULL);
+    ipman_json_add_text_or_null(context, "plan_context_updated_at", pc_ua[0] ? (const unsigned char *)pc_ua : NULL);
+    ipman_json_add_text_or_null(context, "plan_context_updated_by", pc_ub[0] ? (const unsigned char *)pc_ub : NULL);
+    ipman_json_add_text_or_null(context, "git_branch", git_branch[0] ? (const unsigned char *)git_branch : NULL);
+    cJSON_AddBoolToObject(context, "branch_bound", branch_bound);
 
     cJSON *plan = NULL;
     cJSON *phase = NULL;
@@ -606,6 +645,44 @@ static int upsert_branch_context(sqlite3 *db,
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return rc == SQLITE_DONE ? 0 : -1;
+}
+
+/* Look up the plan bound to branch_name in branch_contexts.
+ * Returns 0 and writes plan_id into *out if a row exists (out may be 0
+ * on miss). Returns -1 on DB error. */
+static int lookup_branch_plan(sqlite3 *db,
+                              const char *branch_name,
+                              sqlite3_int64 *out) {
+    *out = 0;
+    const char *sql =
+        "SELECT active_plan_id FROM branch_contexts "
+        "WHERE branch_name = ?1 LIMIT 1;";
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) return -1;
+    sqlite3_bind_text(stmt, 1, branch_name, -1, SQLITE_TRANSIENT);
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *out = sqlite3_column_int64(stmt, 0);
+        sqlite3_finalize(stmt);
+        return 0;
+    }
+    sqlite3_finalize(stmt);
+    return (rc == SQLITE_DONE) ? 0 : -1;
+}
+
+/* Return 1 if the plan exists and is in a non-terminal status,
+ * 0 otherwise. Used to skip stale branch bindings. */
+static int plan_is_nonterminal(sqlite3 *db, sqlite3_int64 plan_id) {
+    const char *sql =
+        "SELECT 1 FROM plans WHERE id = ?1 "
+        "AND status NOT IN ('completed','canceled','archived') LIMIT 1;";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) return 0;
+    sqlite3_bind_int64(stmt, 1, plan_id);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    return rc == SQLITE_ROW ? 1 : 0;
 }
 
 static int insert_context_event(sqlite3 *db,
