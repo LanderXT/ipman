@@ -35,6 +35,16 @@ int ipman_op_task_clear_current(const ipman_request_t *req, sqlite3 *db,
                                cJSON **result_out,
                                ipman_error_code_t *err_code_out,
                                const char **err_msg_out);
+int ipman_op_workspace_list_branch_bindings(const ipman_request_t *req,
+                                            sqlite3 *db,
+                                            cJSON **result_out,
+                                            ipman_error_code_t *err_code_out,
+                                            const char **err_msg_out);
+int ipman_op_workspace_unbind_branch(const ipman_request_t *req,
+                                     sqlite3 *db,
+                                     cJSON **result_out,
+                                     ipman_error_code_t *err_code_out,
+                                     const char **err_msg_out);
 int ipman_context_repair_plan_cursor(sqlite3 *db,
                                     const ipman_request_t *req,
                                     sqlite3_int64 plan_id,
@@ -49,5 +59,7 @@ extern const ipman_param_desc_t ipman_op_phase_set_current_params[];
 extern const ipman_param_desc_t ipman_op_phase_clear_current_params[];
 extern const ipman_param_desc_t ipman_op_task_set_current_params[];
 extern const ipman_param_desc_t ipman_op_task_clear_current_params[];
+extern const ipman_param_desc_t ipman_op_workspace_list_branch_bindings_params[];
+extern const ipman_param_desc_t ipman_op_workspace_unbind_branch_params[];
 
 #endif

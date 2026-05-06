@@ -991,6 +991,149 @@ int ipman_op_plan_deactivate(const ipman_request_t *req, sqlite3 *db,
     return finish_with_context(db, result_out, err_code_out, err_msg_out);
 }
 
+const ipman_param_desc_t ipman_op_workspace_list_branch_bindings_params[] = {
+    { NULL },
+};
+
+int ipman_op_workspace_list_branch_bindings(const ipman_request_t *req,
+                                            sqlite3 *db,
+                                            cJSON **result_out,
+                                            ipman_error_code_t *err_code_out,
+                                            const char **err_msg_out) {
+    (void)req;
+    const char *sql =
+        "SELECT bc.branch_name, bc.active_plan_id, bc.updated_at, bc.updated_by, "
+        "p.title, p.status "
+        "FROM branch_contexts bc "
+        "LEFT JOIN plans p ON p.id = bc.active_plan_id "
+        "ORDER BY bc.branch_name;";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to query branch bindings";
+        return -1;
+    }
+
+    cJSON *bindings = cJSON_CreateArray();
+    if (bindings == NULL) {
+        sqlite3_finalize(stmt);
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to allocate bindings array";
+        return -1;
+    }
+
+    int rc;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        cJSON *b = cJSON_CreateObject();
+        if (b == NULL) {
+            cJSON_Delete(bindings);
+            sqlite3_finalize(stmt);
+            *err_code_out = IPMAN_ERR_INTERNAL;
+            *err_msg_out = "failed to allocate binding";
+            return -1;
+        }
+        ipman_json_add_text_or_null(b, "branch_name",  sqlite3_column_text(stmt, 0));
+        cJSON_AddNumberToObject(b, "active_plan_id", sqlite3_column_double(stmt, 1));
+        ipman_json_add_text_or_null(b, "updated_at",   sqlite3_column_text(stmt, 2));
+        ipman_json_add_text_or_null(b, "updated_by",   sqlite3_column_text(stmt, 3));
+        ipman_json_add_text_or_null(b, "plan_title",   sqlite3_column_text(stmt, 4));
+        ipman_json_add_text_or_null(b, "plan_status",  sqlite3_column_text(stmt, 5));
+        cJSON_AddItemToArray(bindings, b);
+    }
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        cJSON_Delete(bindings);
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "error reading branch bindings";
+        return -1;
+    }
+
+    cJSON *result = cJSON_CreateObject();
+    if (result == NULL) {
+        cJSON_Delete(bindings);
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to allocate result";
+        return -1;
+    }
+    cJSON_AddItemToObject(result, "bindings", bindings);
+    cJSON_AddNumberToObject(result, "count", (double)cJSON_GetArraySize(bindings));
+    *result_out = result;
+    return 0;
+}
+
+const ipman_param_desc_t ipman_op_workspace_unbind_branch_params[] = {
+    { "branch" },
+    { NULL },
+};
+
+int ipman_op_workspace_unbind_branch(const ipman_request_t *req,
+                                     sqlite3 *db,
+                                     cJSON **result_out,
+                                     ipman_error_code_t *err_code_out,
+                                     const char **err_msg_out) {
+    /* Accept explicit branch param; fall back to current git branch. */
+    char branch_buf[256] = {0};
+    const char *branch = NULL;
+    cJSON *branch_item = cJSON_GetObjectItemCaseSensitive(req->params, "branch");
+    if (branch_item != NULL && cJSON_IsString(branch_item) &&
+        branch_item->valuestring != NULL && branch_item->valuestring[0] != '\0') {
+        branch = branch_item->valuestring;
+    } else {
+        if (ipman_git_current_branch(branch_buf, sizeof branch_buf) == 0) {
+            branch = branch_buf;
+        }
+    }
+    if (branch == NULL || branch[0] == '\0') {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "branch param required when not in a git repo or in detached HEAD";
+        return -1;
+    }
+
+    if (ipman_db_begin_immediate(db) != 0) {
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to begin transaction";
+        return -1;
+    }
+
+    const char *sql = "DELETE FROM branch_contexts WHERE branch_name = ?1;";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        run_sql(db, "ROLLBACK;");
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to prepare unbind statement";
+        return -1;
+    }
+    sqlite3_bind_text(stmt, 1, branch, -1, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+
+    if (rc != SQLITE_DONE) {
+        run_sql(db, "ROLLBACK;");
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to delete branch binding";
+        return -1;
+    }
+
+    int deleted = sqlite3_changes(db);
+    if (run_sql(db, "COMMIT;") != 0) {
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to commit";
+        return -1;
+    }
+
+    cJSON *result = cJSON_CreateObject();
+    if (result == NULL) {
+        *err_code_out = IPMAN_ERR_INTERNAL;
+        *err_msg_out = "failed to allocate result";
+        return -1;
+    }
+    ipman_json_add_text_or_null(result, "branch", (const unsigned char *)branch);
+    cJSON_AddBoolToObject(result, "deleted", deleted > 0);
+    *result_out = result;
+    return 0;
+}
+
 static int update_current_phase(sqlite3 *db,
                                 sqlite3_int64 plan_id,
                                 sqlite3_int64 phase_id,
