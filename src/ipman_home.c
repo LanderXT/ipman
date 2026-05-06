@@ -172,6 +172,10 @@ int ipman_home_repo_root_relpath(char *out, size_t outlen) {
     return relativize_to_cwd(root, out, outlen);
 }
 
+int ipman_home_repo_root_abs(char *out, size_t outlen) {
+    return find_repo_root_abs(out, outlen);
+}
+
 static int ipman_home_validate_stat(const char *path, const struct stat *st) {
     if (!S_ISDIR(st->st_mode)) {
         ipman_log_error("ipman_home is not a directory", "path=%s", path);

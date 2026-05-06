@@ -43,6 +43,9 @@
 
 int ipman_home_resolve(char *out, size_t outlen);
 int ipman_home_repo_root_relpath(char *out, size_t outlen);
+/* Write the absolute path of the repo root (the directory that contains
+ * .git) into out. Returns 0 on success, -1 if not in a git repo. */
+int ipman_home_repo_root_abs(char *out, size_t outlen);
 int ipman_home_require(const char *path);
 int ipman_home_ensure(const char *path);
 
