@@ -24,8 +24,9 @@ expect_ok() {
 "$BIN" init >/dev/null 2>/dev/null
 
 # 1. No active plan: --next must explain the missing prerequisite.
+#    Message varies: "no active plan" outside git, "no plan bound" inside git.
 err=$("$BIN" --next 2>&1 >/dev/null) || true
-printf '%s' "$err" | grep -q "no active plan"
+printf '%s' "$err" | grep -qE "no active plan|no plan bound"
 
 # 2. Build a full fixture: plan + phase + 3 pending tasks + instructions
 #    at all three scopes (plan / phase / task).

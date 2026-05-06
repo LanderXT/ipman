@@ -1896,9 +1896,16 @@ static int run_next(void) {
     cJSON *ap_id    = context ? cJSON_GetObjectItemCaseSensitive(context, "active_plan_id")   : NULL;
     cJSON *cph_id   = context ? cJSON_GetObjectItemCaseSensitive(context, "current_phase_id") : NULL;
     cJSON *ctk_id   = context ? cJSON_GetObjectItemCaseSensitive(context, "current_task_id")  : NULL;
+    cJSON *gb_item  = context ? cJSON_GetObjectItemCaseSensitive(context, "git_branch")       : NULL;
+    cJSON *bb_item  = context ? cJSON_GetObjectItemCaseSensitive(context, "branch_bound")     : NULL;
     long plan_id  = (cJSON_IsNumber(ap_id))  ? (long)ap_id->valuedouble  : 0;
     long phase_id = (cJSON_IsNumber(cph_id)) ? (long)cph_id->valuedouble : 0;
     long task_id  = (cJSON_IsNumber(ctk_id)) ? (long)ctk_id->valuedouble : 0;
+    /* Copy branch name before cJSON_Delete(ctx) invalidates the pointer. */
+    char git_branch[256] = {0};
+    if (cJSON_IsString(gb_item) && gb_item->valuestring)
+        snprintf(git_branch, sizeof git_branch, "%s", gb_item->valuestring);
+    int branch_bound = cJSON_IsTrue(bb_item);
     cJSON *project = context ? cJSON_DetachItemFromObjectCaseSensitive(context, "project") : NULL;
     cJSON_Delete(ctx);
 
@@ -1908,10 +1915,23 @@ static int run_next(void) {
          * regardless of cursor state. Render it and surface a hint. */
         next_print_project(stdout, project);
         if (project) cJSON_Delete(project);
-        fprintf(stderr,
-                "ipman next: no active plan — run `ipman --activate <plan>` first\n");
+        if (git_branch[0] != '\0') {
+            fprintf(stderr, "ipman next: on branch '%s' — no plan bound; "
+                    "run `ipman --activate <plan>` to bind one\n", git_branch);
+        } else {
+            fprintf(stderr,
+                    "ipman next: no active plan — run `ipman --activate <plan>` first\n");
+        }
         ipman_db_close(db);
         return 1;
+    }
+    /* Print branch context before the plan view. */
+    if (git_branch[0] != '\0') {
+        if (branch_bound) {
+            fprintf(stdout, "Branch  %s  (bound)\n", git_branch);
+        } else {
+            fprintf(stdout, "Branch  %s\n", git_branch);
+        }
     }
 
     /* 2-4. plan.get / phase.get / task.get for full, authoritative entities. */
