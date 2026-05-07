@@ -615,13 +615,16 @@ int ipman_import_portable(const char *home_path, const char *bundle_path) {
         return -1;
     }
 
-    /* Extract DB bytes to a temp file. */
+    /* Extract DB bytes to a temp file in the system temp dir.
+     * home_path directory may not exist yet, so we cannot write there. */
+    const char *tmpdir = getenv("TMPDIR");
+    if (tmpdir == NULL) tmpdir = "/tmp";
     char tmp_path[PATH_MAX];
-    int tn = snprintf(tmp_path, sizeof tmp_path, "%s.import.tmp.%ld",
-                      db_path, (long)getpid());
+    int tn = snprintf(tmp_path, sizeof tmp_path, "%s/ipman-import.%ld.tmp",
+                      tmpdir, (long)getpid());
     if (tn < 0 || (size_t)tn >= sizeof tmp_path) {
         fclose(f);
-        ipman_log_error("tmp path too long", "db=%s", db_path);
+        ipman_log_error("tmp path too long", "tmpdir=%s", tmpdir);
         return -1;
     }
 
