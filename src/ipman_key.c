@@ -355,3 +355,26 @@ int ipman_keysalt_ensure(const char *home_path) {
     close(lock_fd);
     return 0;
 }
+
+int ipman_key_derive_passphrase(const unsigned char *passphrase,
+                                size_t passphrase_len,
+                                const unsigned char *salt,
+                                unsigned char *out) {
+    if (sodium_init() < 0) {
+        ipman_log_error("sodium_init failed", "rc=-1");
+        return -1;
+    }
+
+    int rc = crypto_pwhash(out, IPMAN_KEY_BYTES,
+                           (const char *)passphrase, passphrase_len,
+                           salt,
+                           crypto_pwhash_OPSLIMIT_INTERACTIVE,
+                           crypto_pwhash_MEMLIMIT_INTERACTIVE,
+                           crypto_pwhash_ALG_ARGON2ID13);
+    if (rc != 0) {
+        ipman_log_error("crypto_pwhash failed (likely out of memory)",
+                       "rc=%d", rc);
+        return -1;
+    }
+    return 0;
+}

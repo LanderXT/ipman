@@ -5,6 +5,8 @@
 #ifndef IPMAN_KEY_H
 #define IPMAN_KEY_H
 
+#include <stddef.h>
+
 /*
  * Derive the SQLCipher page-encryption key for this workspace.
  *
@@ -41,6 +43,25 @@
 #define IPMAN_KEY_BYTES 32
 
 int ipman_key_derive(const char *home_path, unsigned char *out);
+
+/*
+ * Derive a transport key from a user-supplied passphrase.
+ *
+ * Uses the same Argon2id INTERACTIVE profile as ipman_key_derive so the
+ * security margin is identical. The password input is the raw passphrase
+ * bytes (not machine-bound), making the resulting key portable across hosts.
+ *
+ * passphrase / passphrase_len: UTF-8 passphrase, not NUL-terminated.
+ * salt: must be exactly crypto_pwhash_SALTBYTES (16) random bytes.
+ * out: must point to a buffer of at least IPMAN_KEY_BYTES (32) bytes.
+ *
+ * Returns 0 on success, -1 on failure (out of memory or sodium_init failure).
+ * Caller is responsible for sodium_memzero on `out` after use.
+ */
+int ipman_key_derive_passphrase(const unsigned char *passphrase,
+                                size_t passphrase_len,
+                                const unsigned char *salt,
+                                unsigned char *out);
 
 /*
  * Ensure <home_path>/keysalt exists with the expected size, mode, and owner.
