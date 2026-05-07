@@ -6,6 +6,7 @@
 
 #include "log.h"
 #include "ipman_key.h"
+#include "passphrase.h"
 
 #include "sqlite3.h"
 
@@ -22,6 +23,22 @@
 #define SQLITE_MAGIC_LEN 16
 static const unsigned char kSqliteMagic[SQLITE_MAGIC_LEN] =
     "SQLite format 3";  /* trailing NUL is the 16th byte */
+
+#define IPMX_MAGIC_LEN   4
+#define IPMX_HEADER_LEN  (IPMX_MAGIC_LEN + 1 + crypto_pwhash_SALTBYTES)
+static const unsigned char kIpmxMagic[IPMX_MAGIC_LEN] = {0x49, 0x50, 0x4d, 0x58};
+static const unsigned char kIpmxVersion = 0x01;
+
+/* Stream-copy all remaining bytes from `src` to `dst` using a 64 KB buffer.
+ * Returns 0 on success, -1 on I/O error. */
+static int copy_file_bytes(FILE *src, FILE *dst) {
+    unsigned char buf[65536];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, src)) > 0) {
+        if (fwrite(buf, 1, n, dst) != n) return -1;
+    }
+    return ferror(src) ? -1 : 0;
+}
 
 static int join_path(char *out, size_t cap, const char *home, const char *name) {
     int n = snprintf(out, cap, "%s/%s", home, name);
@@ -369,5 +386,181 @@ int ipman_export_plaintext(const char *home_path, const char *out_path) {
     ipman_log_info("plaintext export bypasses encryption -- store securely "
                   "and remove when no longer needed",
                   "path=%s", out_path);
+    return 0;
+}
+
+int ipman_export_portable(const char *home_path, const char *out_path) {
+    char db_path[PATH_MAX];
+    if (join_path(db_path, sizeof db_path, home_path, "ipman.db") != 0) {
+        ipman_log_error("path too long", "home=%s", home_path);
+        return -1;
+    }
+
+    if (strcmp(db_path, out_path) == 0) {
+        ipman_log_error("output path equals live DB; refusing", "path=%s", out_path);
+        return -1;
+    }
+    if (access(out_path, F_OK) == 0) {
+        ipman_log_error("output file already exists; remove it first",
+                       "path=%s", out_path);
+        return -1;
+    }
+
+    /* Read passphrase (twice when interactive to catch typos). */
+    char pass1[1024], pass2[1024];
+    size_t pass1_len = 0, pass2_len = 0;
+    if (ipman_read_passphrase("Export passphrase: ", pass1, sizeof pass1,
+                               &pass1_len) != 0) {
+        return -1;
+    }
+
+    const char *env_pass = getenv("IPMAN_PASSPHRASE");
+    if (env_pass == NULL) {
+        /* Interactive: confirm. */
+        if (ipman_read_passphrase("Confirm passphrase: ", pass2, sizeof pass2,
+                                   &pass2_len) != 0) {
+            sodium_memzero(pass1, sizeof pass1);
+            return -1;
+        }
+        if (pass1_len != pass2_len ||
+            sodium_memcmp(pass1, pass2, pass1_len) != 0) {
+            sodium_memzero(pass1, sizeof pass1);
+            sodium_memzero(pass2, sizeof pass2);
+            fprintf(stderr, "ipman: passphrases do not match\n");
+            return -1;
+        }
+        sodium_memzero(pass2, sizeof pass2);
+    }
+
+    /* Derive transport key. */
+    unsigned char salt[crypto_pwhash_SALTBYTES];
+    randombytes_buf(salt, sizeof salt);
+
+    unsigned char tkey[IPMAN_KEY_BYTES];
+    int krc = ipman_key_derive_passphrase(
+        (unsigned char *)pass1, pass1_len, salt, tkey);
+    sodium_memzero(pass1, sizeof pass1);
+    if (krc != 0) return -1;
+
+    char tkey_hex[65];
+    hex_encode_32(tkey, tkey_hex);
+    sodium_memzero(tkey, sizeof tkey);
+
+    /* Derive machine key for source. */
+    unsigned char mkey[IPMAN_KEY_BYTES];
+    if (ipman_key_derive(home_path, mkey) != 0) {
+        sodium_memzero(tkey_hex, sizeof tkey_hex);
+        return -1;
+    }
+    char mkey_hex[65];
+    hex_encode_32(mkey, mkey_hex);
+    sodium_memzero(mkey, sizeof mkey);
+
+    /* Write transport-encrypted DB to a temp file next to the output. */
+    char tmp_path[PATH_MAX];
+    int tn = snprintf(tmp_path, sizeof tmp_path, "%s.tmp.%ld",
+                      out_path, (long)getpid());
+    if (tn < 0 || (size_t)tn >= sizeof tmp_path) {
+        sodium_memzero(tkey_hex, sizeof tkey_hex);
+        sodium_memzero(mkey_hex, sizeof mkey_hex);
+        ipman_log_error("tmp path too long", "out=%s", out_path);
+        return -1;
+    }
+
+    sqlite3 *db = NULL;
+    int rc = sqlite3_open_v2(tmp_path, &db,
+                             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
+    if (rc != SQLITE_OK) {
+        ipman_log_error("cannot open transport-key tmp",
+                       "path=%s rc=%d", tmp_path, rc);
+        sodium_memzero(tkey_hex, sizeof tkey_hex);
+        sodium_memzero(mkey_hex, sizeof mkey_hex);
+        return -1;
+    }
+
+    char *key_sql = sqlite3_mprintf("PRAGMA key = \"x'%s'\"", tkey_hex);
+    sodium_memzero(tkey_hex, sizeof tkey_hex);
+    if (key_sql == NULL || run_sql(db, key_sql, "PRAGMA key (transport)") != SQLITE_OK) {
+        if (key_sql != NULL) { sodium_memzero(key_sql, strlen(key_sql)); sqlite3_free(key_sql); }
+        sodium_memzero(mkey_hex, sizeof mkey_hex);
+        sqlite3_close(db);
+        unlink(tmp_path);
+        return -1;
+    }
+    sodium_memzero(key_sql, strlen(key_sql));
+    sqlite3_free(key_sql);
+
+    char *attach_sql = sqlite3_mprintf(
+        "ATTACH DATABASE %Q AS source KEY \"x'%s'\"", db_path, mkey_hex);
+    sodium_memzero(mkey_hex, sizeof mkey_hex);
+    if (attach_sql == NULL ||
+        run_sql(db, attach_sql, "ATTACH source") != SQLITE_OK) {
+        if (attach_sql != NULL) { sodium_memzero(attach_sql, strlen(attach_sql)); sqlite3_free(attach_sql); }
+        sqlite3_close(db);
+        unlink(tmp_path);
+        return -1;
+    }
+    sodium_memzero(attach_sql, strlen(attach_sql));
+    sqlite3_free(attach_sql);
+
+    /* Verify source key before committing to the full export. */
+    if (run_sql(db, "SELECT count(*) FROM source.sqlite_master",
+                "verify source key") != SQLITE_OK) {
+        sqlite3_exec(db, "DETACH DATABASE source", NULL, NULL, NULL);
+        sqlite3_close(db);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    rc = run_sql(db, "SELECT sqlcipher_export('main', 'source')",
+                 "sqlcipher_export portable");
+    sqlite3_exec(db, "DETACH DATABASE source", NULL, NULL, NULL);
+    sqlite3_close(db);
+    if (rc != SQLITE_OK) {
+        unlink(tmp_path);
+        return -1;
+    }
+
+    /* Write bundle: [header][tmp bytes] → out_path */
+    FILE *tmp_f = fopen(tmp_path, "rb");
+    if (tmp_f == NULL) {
+        ipman_log_error("cannot open tmp for bundle assembly",
+                       "path=%s errno=%d", tmp_path, errno);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    FILE *out_f = fopen(out_path, "wb");
+    if (out_f == NULL) {
+        ipman_log_error("cannot create bundle output",
+                       "path=%s errno=%d", out_path, errno);
+        fclose(tmp_f);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    int write_ok =
+        fwrite(kIpmxMagic,      1, IPMX_MAGIC_LEN,               out_f) == IPMX_MAGIC_LEN &&
+        fwrite(&kIpmxVersion,   1, 1,                             out_f) == 1 &&
+        fwrite(salt,            1, crypto_pwhash_SALTBYTES,       out_f) == crypto_pwhash_SALTBYTES &&
+        copy_file_bytes(tmp_f, out_f) == 0;
+
+    fclose(tmp_f);
+    unlink(tmp_path);
+
+    if (!write_ok || fclose(out_f) != 0) {
+        ipman_log_error("failed to write bundle", "path=%s", out_path);
+        unlink(out_path);
+        return -1;
+    }
+
+    if (chmod(out_path, S_IRUSR | S_IWUSR) != 0) {
+        ipman_log_error("cannot chmod bundle to 0600",
+                       "path=%s errno=%d", out_path, errno);
+        unlink(out_path);
+        return -1;
+    }
+
+    ipman_log_info("exported portable bundle", "path=%s", out_path);
     return 0;
 }

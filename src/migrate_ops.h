@@ -39,4 +39,36 @@ int ipman_migrate_encrypt(const char *home_path);
  */
 int ipman_export_plaintext(const char *home_path, const char *out_path);
 
+/*
+ * Export the workspace database as a portable bundle to `out_path`.
+ *
+ * The bundle format is:
+ *   [4 bytes magic "IPMX"][1 byte version 0x01][16 bytes Argon2id salt]
+ *   [SQLCipher database encrypted with transport_key]
+ *
+ * where transport_key = Argon2id(passphrase, salt, INTERACTIVE).
+ *
+ * The passphrase is read from IPMAN_PASSPHRASE env var (scripting) or
+ * interactively from /dev/tty with echo suppressed (interactive). When
+ * interactive, the passphrase is requested twice and must match.
+ *
+ * Returns 0 on success, -1 on failure (diagnostic on stderr).
+ */
+int ipman_export_portable(const char *home_path, const char *out_path);
+
+/*
+ * Import a portable bundle created by ipman_export_portable into `home_path`.
+ *
+ * Reads and validates the bundle header, derives the transport key from the
+ * embedded salt and the user passphrase, then transfers the decrypted data
+ * into a newly-initialized workspace at `home_path` using the machine-bound
+ * key. Applies migrations after import to handle schema upgrades.
+ *
+ * Refuses if `home_path` already contains an ipman.db (prevents accidental
+ * overwrites; user must choose a different IPMAN_HOME or remove the DB).
+ *
+ * Returns 0 on success, -1 on failure (diagnostic on stderr).
+ */
+int ipman_import_portable(const char *home_path, const char *bundle_path);
+
 #endif
