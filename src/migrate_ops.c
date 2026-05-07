@@ -4,8 +4,10 @@
 
 #include "migrate_ops.h"
 
-#include "log.h"
+#include "ipman_home.h"
 #include "ipman_key.h"
+#include "log.h"
+#include "migrations.h"
 #include "passphrase.h"
 
 #include "sqlite3.h"
@@ -562,5 +564,258 @@ int ipman_export_portable(const char *home_path, const char *out_path) {
     }
 
     ipman_log_info("exported portable bundle", "path=%s", out_path);
+    return 0;
+}
+
+int ipman_import_portable(const char *home_path, const char *bundle_path) {
+    /* Refuse if target workspace already has a DB. */
+    char db_path[PATH_MAX];
+    if (join_path(db_path, sizeof db_path, home_path, "ipman.db") != 0) {
+        ipman_log_error("path too long", "home=%s", home_path);
+        return -1;
+    }
+    if (access(db_path, F_OK) == 0) {
+        ipman_log_error("target workspace already has a database; "
+                       "choose a different IPMAN_HOME or remove ipman.db first",
+                       "path=%s", db_path);
+        return -1;
+    }
+
+    /* Read and validate bundle header. */
+    FILE *f = fopen(bundle_path, "rb");
+    if (f == NULL) {
+        ipman_log_error("cannot open bundle", "path=%s errno=%d",
+                       bundle_path, errno);
+        return -1;
+    }
+
+    unsigned char magic[IPMX_MAGIC_LEN];
+    unsigned char version;
+    unsigned char salt[crypto_pwhash_SALTBYTES];
+
+    if (fread(magic,   1, IPMX_MAGIC_LEN,              f) != IPMX_MAGIC_LEN ||
+        fread(&version,1, 1,                            f) != 1 ||
+        fread(salt,    1, crypto_pwhash_SALTBYTES,      f) != (size_t)crypto_pwhash_SALTBYTES) {
+        fclose(f);
+        ipman_log_error("bundle header too short or unreadable",
+                       "path=%s", bundle_path);
+        return -1;
+    }
+
+    if (memcmp(magic, kIpmxMagic, IPMX_MAGIC_LEN) != 0) {
+        fclose(f);
+        ipman_log_error("not a valid ipman portable bundle (bad magic)",
+                       "path=%s", bundle_path);
+        return -1;
+    }
+    if (version != kIpmxVersion) {
+        fclose(f);
+        ipman_log_error("unsupported bundle version",
+                       "path=%s version=%d", bundle_path, (int)version);
+        return -1;
+    }
+
+    /* Extract DB bytes to a temp file. */
+    char tmp_path[PATH_MAX];
+    int tn = snprintf(tmp_path, sizeof tmp_path, "%s.import.tmp.%ld",
+                      db_path, (long)getpid());
+    if (tn < 0 || (size_t)tn >= sizeof tmp_path) {
+        fclose(f);
+        ipman_log_error("tmp path too long", "db=%s", db_path);
+        return -1;
+    }
+
+    FILE *tmp_f = fopen(tmp_path, "wb");
+    if (tmp_f == NULL) {
+        fclose(f);
+        ipman_log_error("cannot create import tmp",
+                       "path=%s errno=%d", tmp_path, errno);
+        return -1;
+    }
+
+    if (copy_file_bytes(f, tmp_f) != 0) {
+        fclose(f);
+        fclose(tmp_f);
+        unlink(tmp_path);
+        ipman_log_error("failed to extract bundle DB bytes",
+                       "bundle=%s", bundle_path);
+        return -1;
+    }
+    fclose(f);
+    fclose(tmp_f);
+
+    /* Derive transport key from passphrase. */
+    char pass[1024];
+    size_t pass_len = 0;
+    if (ipman_read_passphrase("Import passphrase: ", pass, sizeof pass,
+                               &pass_len) != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+
+    unsigned char tkey[IPMAN_KEY_BYTES];
+    int krc = ipman_key_derive_passphrase(
+        (unsigned char *)pass, pass_len, salt, tkey);
+    sodium_memzero(pass, sizeof pass);
+    if (krc != 0) {
+        unlink(tmp_path);
+        return -1;
+    }
+    char tkey_hex[65];
+    hex_encode_32(tkey, tkey_hex);
+    sodium_memzero(tkey, sizeof tkey);
+
+    /* Verify transport key by opening the extracted DB. */
+    sqlite3 *src_db = NULL;
+    int rc = sqlite3_open_v2(tmp_path, &src_db, SQLITE_OPEN_READONLY, NULL);
+    if (rc != SQLITE_OK) {
+        ipman_log_error("cannot open extracted bundle DB",
+                       "path=%s rc=%d", tmp_path, rc);
+        sodium_memzero(tkey_hex, sizeof tkey_hex);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    char *key_sql = sqlite3_mprintf("PRAGMA key = \"x'%s'\"", tkey_hex);
+    if (key_sql == NULL ||
+        run_sql(src_db, key_sql, "PRAGMA key (verify transport)") != SQLITE_OK) {
+        if (key_sql != NULL) { sodium_memzero(key_sql, strlen(key_sql)); sqlite3_free(key_sql); }
+        sodium_memzero(tkey_hex, sizeof tkey_hex);
+        sqlite3_close(src_db);
+        unlink(tmp_path);
+        return -1;
+    }
+    sodium_memzero(key_sql, strlen(key_sql));
+    sqlite3_free(key_sql);
+
+    char *err = NULL;
+    rc = sqlite3_exec(src_db, "SELECT count(*) FROM sqlite_master",
+                      NULL, NULL, &err);
+    sqlite3_close(src_db);
+    if (rc != SQLITE_OK) {
+        ipman_log_error("transport key verification failed (wrong passphrase?)",
+                       "rc=%d detail=%s", rc, err ? err : "(null)");
+        sqlite3_free(err);
+        sodium_memzero(tkey_hex, sizeof tkey_hex);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    /* Initialize target workspace (creates directory + keysalt). */
+    if (ipman_home_ensure(home_path) != 0 ||
+        ipman_keysalt_ensure(home_path) != 0) {
+        sodium_memzero(tkey_hex, sizeof tkey_hex);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    /* Derive machine key for target. */
+    unsigned char mkey[IPMAN_KEY_BYTES];
+    if (ipman_key_derive(home_path, mkey) != 0) {
+        sodium_memzero(tkey_hex, sizeof tkey_hex);
+        unlink(tmp_path);
+        return -1;
+    }
+    char mkey_hex[65];
+    hex_encode_32(mkey, mkey_hex);
+    sodium_memzero(mkey, sizeof mkey);
+
+    /* Transfer: open new machine-keyed target, attach tmp with transport key. */
+    sqlite3 *dst_db = NULL;
+    rc = sqlite3_open_v2(db_path, &dst_db,
+                         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
+    if (rc != SQLITE_OK) {
+        ipman_log_error("cannot create target DB",
+                       "path=%s rc=%d", db_path, rc);
+        sodium_memzero(tkey_hex, sizeof tkey_hex);
+        sodium_memzero(mkey_hex, sizeof mkey_hex);
+        unlink(tmp_path);
+        return -1;
+    }
+
+    char *dst_key_sql = sqlite3_mprintf("PRAGMA key = \"x'%s'\"", mkey_hex);
+    sodium_memzero(mkey_hex, sizeof mkey_hex);
+    if (dst_key_sql == NULL ||
+        run_sql(dst_db, dst_key_sql, "PRAGMA key (machine)") != SQLITE_OK) {
+        if (dst_key_sql != NULL) { sodium_memzero(dst_key_sql, strlen(dst_key_sql)); sqlite3_free(dst_key_sql); }
+        sodium_memzero(tkey_hex, sizeof tkey_hex);
+        sqlite3_close(dst_db);
+        unlink(tmp_path);
+        unlink(db_path);
+        return -1;
+    }
+    sodium_memzero(dst_key_sql, strlen(dst_key_sql));
+    sqlite3_free(dst_key_sql);
+
+    char *src_attach_sql = sqlite3_mprintf(
+        "ATTACH DATABASE %Q AS source KEY \"x'%s'\"", tmp_path, tkey_hex);
+    sodium_memzero(tkey_hex, sizeof tkey_hex);
+    if (src_attach_sql == NULL ||
+        run_sql(dst_db, src_attach_sql, "ATTACH source (transport)") != SQLITE_OK) {
+        if (src_attach_sql != NULL) { sodium_memzero(src_attach_sql, strlen(src_attach_sql)); sqlite3_free(src_attach_sql); }
+        sqlite3_close(dst_db);
+        unlink(tmp_path);
+        unlink(db_path);
+        return -1;
+    }
+    sodium_memzero(src_attach_sql, strlen(src_attach_sql));
+    sqlite3_free(src_attach_sql);
+
+    rc = run_sql(dst_db, "SELECT sqlcipher_export('main', 'source')",
+                 "sqlcipher_export import");
+    sqlite3_exec(dst_db, "DETACH DATABASE source", NULL, NULL, NULL);
+    sqlite3_close(dst_db);
+    unlink(tmp_path);
+
+    if (rc != SQLITE_OK) {
+        unlink(db_path);
+        return -1;
+    }
+
+    /* Apply migrations — the source bundle may be from an older schema version.
+     * Pass NULL for db_path so no backup is made (the entire DB was just created). */
+    sqlite3 *mig_db = NULL;
+    rc = sqlite3_open_v2(db_path, &mig_db, SQLITE_OPEN_READWRITE, NULL);
+    if (rc != SQLITE_OK) {
+        ipman_log_error("cannot reopen imported DB for migrations",
+                       "path=%s rc=%d", db_path, rc);
+        unlink(db_path);
+        return -1;
+    }
+
+    /* Re-apply machine key on migration connection. */
+    unsigned char mkey2[IPMAN_KEY_BYTES];
+    if (ipman_key_derive(home_path, mkey2) != 0) {
+        sqlite3_close(mig_db);
+        unlink(db_path);
+        return -1;
+    }
+    char mkey2_hex[65];
+    hex_encode_32(mkey2, mkey2_hex);
+    sodium_memzero(mkey2, sizeof mkey2);
+
+    char *mig_key_sql = sqlite3_mprintf("PRAGMA key = \"x'%s'\"", mkey2_hex);
+    sodium_memzero(mkey2_hex, sizeof mkey2_hex);
+    if (mig_key_sql == NULL ||
+        run_sql(mig_db, mig_key_sql, "PRAGMA key (migration)") != SQLITE_OK) {
+        if (mig_key_sql != NULL) { sodium_memzero(mig_key_sql, strlen(mig_key_sql)); sqlite3_free(mig_key_sql); }
+        sqlite3_close(mig_db);
+        unlink(db_path);
+        return -1;
+    }
+    sodium_memzero(mig_key_sql, strlen(mig_key_sql));
+    sqlite3_free(mig_key_sql);
+
+    int schema_version = 0;
+    if (ipman_migrations_apply(mig_db, NULL, &schema_version) != 0) {
+        sqlite3_close(mig_db);
+        unlink(db_path);
+        return -1;
+    }
+    sqlite3_close(mig_db);
+
+    ipman_log_info("imported portable bundle",
+                  "bundle=%s db=%s schema_version=%d",
+                  bundle_path, db_path, schema_version);
     return 0;
 }
