@@ -453,6 +453,77 @@ static int run_export(int argc, char **argv) {
     return 0;
 }
 
+/* Parse `ipman export-portable --output <file>` argv. */
+static int run_export_portable(int argc, char **argv) {
+    const char *out_path = NULL;
+    for (int i = 2; i < argc; ++i) {
+        if (strncmp(argv[i], "--output=", 9) == 0) {
+            out_path = argv[i] + 9;
+        } else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc) {
+            out_path = argv[++i];
+        } else if (argv[i][0] == '-') {
+            fprintf(stderr, "ipman export-portable: unknown flag: %s\n", argv[i]);
+            return 1;
+        } else if (out_path == NULL) {
+            out_path = argv[i];
+        } else {
+            fprintf(stderr, "ipman export-portable: unexpected argument: %s\n",
+                    argv[i]);
+            return 1;
+        }
+    }
+    if (out_path == NULL) {
+        fprintf(stderr,
+                "usage: ipman export-portable --output <file.ipman>\n");
+        return 1;
+    }
+
+    char home[PATH_MAX];
+    if (ipman_home_resolve(home, sizeof home) != 0) {
+        return emit_fatal(NULL, IPMAN_ERR_INTERNAL, "cannot resolve ipman home");
+    }
+    if (ipman_home_require(home) != 0) {
+        return emit_fatal(NULL, IPMAN_ERR_INTERNAL,
+                          "ipman workspace not initialized; run `ipman init` first");
+    }
+    if (ipman_export_portable(home, out_path) != 0) {
+        return emit_fatal(NULL, IPMAN_ERR_INTERNAL, "export-portable failed");
+    }
+    fprintf(stdout, "exported to %s\n", out_path);
+    return 0;
+}
+
+/* Parse `ipman import-portable <file.ipman>` argv. */
+static int run_import_portable(int argc, char **argv) {
+    const char *bundle_path = NULL;
+    for (int i = 2; i < argc; ++i) {
+        if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            fprintf(stderr, "ipman import-portable: unknown flag: %s\n", argv[i]);
+            return 1;
+        } else if (bundle_path == NULL) {
+            bundle_path = argv[i];
+        } else {
+            fprintf(stderr, "ipman import-portable: unexpected argument: %s\n",
+                    argv[i]);
+            return 1;
+        }
+    }
+    if (bundle_path == NULL) {
+        fprintf(stderr, "usage: ipman import-portable <file.ipman>\n");
+        return 1;
+    }
+
+    char home[PATH_MAX];
+    if (ipman_home_resolve(home, sizeof home) != 0) {
+        return emit_fatal(NULL, IPMAN_ERR_INTERNAL, "cannot resolve ipman home");
+    }
+    if (ipman_import_portable(home, bundle_path) != 0) {
+        return emit_fatal(NULL, IPMAN_ERR_INTERNAL, "import-portable failed");
+    }
+    fprintf(stdout, "imported from %s\n", bundle_path);
+    return 0;
+}
+
 /* Parse `ipman import-plan <file.json>` argv (argv[1] is already known to be
  * the import-plan verb). The sole positional argument is the JSON file path. */
 static int run_import_plan(int argc, char **argv) {
@@ -542,6 +613,8 @@ static const char *parse_command(const char *arg) {
     if (strcmp(arg, "export") == 0 || strcmp(arg, "--export") == 0) return "export";
     if (strcmp(arg, "sql") == 0 || strcmp(arg, "--sql") == 0) return "sql";
     if (strcmp(arg, "import-plan") == 0 || strcmp(arg, "--import-plan") == 0) return "import-plan";
+    if (strcmp(arg, "export-portable") == 0 || strcmp(arg, "--export-portable") == 0) return "export-portable";
+    if (strcmp(arg, "import-portable") == 0 || strcmp(arg, "--import-portable") == 0) return "import-portable";
     if (strcmp(arg, "render")   == 0 || strcmp(arg, "-R")  == 0 || strcmp(arg, "--render")  == 0) return "render";
     if (strcmp(arg, "status")   == 0 || strcmp(arg, "-S")  == 0 || strcmp(arg, "--status")  == 0) return "status";
     if (strcmp(arg, "ls")       == 0 || strcmp(arg, "-L")  == 0 || strcmp(arg, "--ls")      == 0) return "ls";
@@ -2176,8 +2249,10 @@ int main(int argc, char **argv) {
     if (cmd != NULL && strcmp(cmd, "version") == 0) { fprintf(stdout, "ipman %s\n", IPMAN_VERSION); return 0; }
     if (cmd != NULL && strcmp(cmd, "init")   == 0) { return run_init(); }
     if (cmd != NULL && strcmp(cmd, "migrate-encrypt") == 0) { return run_migrate_encrypt(); }
-    if (cmd != NULL && strcmp(cmd, "export")      == 0) { return run_export(argc, argv); }
-    if (cmd != NULL && strcmp(cmd, "import-plan") == 0) { return run_import_plan(argc, argv); }
+    if (cmd != NULL && strcmp(cmd, "export")           == 0) { return run_export(argc, argv); }
+    if (cmd != NULL && strcmp(cmd, "export-portable")  == 0) { return run_export_portable(argc, argv); }
+    if (cmd != NULL && strcmp(cmd, "import-portable")  == 0) { return run_import_portable(argc, argv); }
+    if (cmd != NULL && strcmp(cmd, "import-plan")      == 0) { return run_import_plan(argc, argv); }
     if (cmd != NULL && strcmp(cmd, "sql")         == 0) { return run_sql_cmd(argc, argv); }
     if (cmd != NULL && strcmp(cmd, "status") == 0) { return run_status(); }
     if (cmd != NULL && strcmp(cmd, "ls")     == 0) { return run_ls(); }
