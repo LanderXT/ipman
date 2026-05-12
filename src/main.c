@@ -2046,15 +2046,17 @@ static void next_print_project(FILE *out, const cJSON *project) {
 
     const cJSON *pi = cJSON_GetObjectItemCaseSensitive(project, "instructions");
     if (cJSON_IsArray(pi) && cJSON_GetArraySize(pi) > 0) {
-        fputs("\nProject instructions\n", out);
+        fputs("\n<project_instructions>\n", out);
         cli_table_t pt;
-        const char *phdr[] = {"Type", "Body"};
-        cli_table_init(&pt, 2, phdr);
+        const char *phdr[] = {"Priority", "Type", "Body"};
+        cli_table_init(&pt, 3, phdr);
         const cJSON *e;
         cJSON_ArrayForEach(e, pi) {
             const cJSON *body  = cJSON_GetObjectItemCaseSensitive(e, "body");
             const cJSON *itype = cJSON_GetObjectItemCaseSensitive(e, "instruction_type");
+            const cJSON *prio  = cJSON_GetObjectItemCaseSensitive(e, "priority");
             const char *row[] = {
+                (prio  && cJSON_IsString(prio))  ? prio->valuestring  : "normal",
                 (itype && cJSON_IsString(itype)) ? itype->valuestring : "",
                 (body  && cJSON_IsString(body))  ? body->valuestring  : "",
             };
@@ -2062,6 +2064,7 @@ static void next_print_project(FILE *out, const cJSON *project) {
         }
         cli_table_print(&pt, out);
         cli_table_free(&pt);
+        fputs("</project_instructions>\n", out);
     }
 }
 

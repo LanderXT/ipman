@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"protocol_version\":2,\"request_id\":\"hook-proj\",\"actor\":\"agent\",\"op\":\"instruction.list\",\"params\":{\"entity_type\":\"project\",\"entity_id\":1}}' | ipman 2>/dev/null | jq -r 'if (.result.instructions | length) > 0 then \"<project_instructions>\", (.result.instructions[] | .priority + \": \" + .body), \"</project_instructions>\" else empty end' 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
