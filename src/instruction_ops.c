@@ -184,12 +184,13 @@ static cJSON *instruction_from_row(sqlite3_stmt *stmt) {
     cJSON_AddNumberToObject(instruction, "entity_id",
                             (double)sqlite3_column_int64(stmt, 2));
     ipman_json_add_text_or_null(instruction, "instruction_type", sqlite3_column_text(stmt, 3));
-    ipman_json_add_text_or_null(instruction, "body", sqlite3_column_text(stmt, 4));
-    ipman_json_add_text_or_null(instruction, "author", sqlite3_column_text(stmt, 5));
-    ipman_json_add_text_or_null(instruction, "created_at", sqlite3_column_text(stmt, 6));
-    ipman_json_add_text_or_null(instruction, "updated_at", sqlite3_column_text(stmt, 7));
-    ipman_json_add_text_or_null(instruction, "invalidated_at", sqlite3_column_text(stmt, 8));
-    ipman_json_add_text_or_null(instruction, "invalidated_by", sqlite3_column_text(stmt, 9));
+    ipman_json_add_text_or_null(instruction, "priority", sqlite3_column_text(stmt, 4));
+    ipman_json_add_text_or_null(instruction, "body", sqlite3_column_text(stmt, 5));
+    ipman_json_add_text_or_null(instruction, "author", sqlite3_column_text(stmt, 6));
+    ipman_json_add_text_or_null(instruction, "created_at", sqlite3_column_text(stmt, 7));
+    ipman_json_add_text_or_null(instruction, "updated_at", sqlite3_column_text(stmt, 8));
+    ipman_json_add_text_or_null(instruction, "invalidated_at", sqlite3_column_text(stmt, 9));
+    ipman_json_add_text_or_null(instruction, "invalidated_by", sqlite3_column_text(stmt, 10));
     return instruction;
 }
 
@@ -242,21 +243,23 @@ static int insert_instruction(sqlite3 *db,
                               const char *entity_type,
                               sqlite3_int64 entity_id,
                               const char *instruction_type,
+                              const char *priority,
                               const char *body,
                               const char *author,
                               sqlite3_int64 *instruction_id_out) {
     const char *sql =
         "INSERT INTO instructions("
-        "entity_type, entity_id, instruction_type, body, author"
-        ") VALUES (?, ?, ?, ?, ?);";
+        "entity_type, entity_id, instruction_type, priority, body, author"
+        ") VALUES (?, ?, ?, ?, ?, ?);";
     sqlite3_stmt *stmt = NULL;
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) return -1;
     sqlite3_bind_text(stmt, 1, entity_type, -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 2, entity_id);
     sqlite3_bind_text(stmt, 3, instruction_type, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 4, body, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 5, author, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, priority, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, body, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 6, author, -1, SQLITE_TRANSIENT);
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE) return -1;
@@ -266,7 +269,7 @@ static int insert_instruction(sqlite3 *db,
 
 static cJSON *load_instruction(sqlite3 *db, sqlite3_int64 instruction_id) {
     const char *sql =
-        "SELECT id, entity_type, entity_id, instruction_type, body, author, "
+        "SELECT id, entity_type, entity_id, instruction_type, priority, body, author, "
         "created_at, updated_at, invalidated_at, invalidated_by "
         "FROM instructions WHERE id = ?;";
     sqlite3_stmt *stmt = NULL;
@@ -314,10 +317,12 @@ static int load_instruction_meta(sqlite3 *db, sqlite3_int64 instruction_id,
 static int update_instruction(sqlite3 *db,
                               sqlite3_int64 instruction_id,
                               const char *instruction_type,
+                              const char *priority,
                               const char *body) {
     const char *sql =
         "UPDATE instructions SET "
         "instruction_type = COALESCE(?, instruction_type), "
+        "priority = COALESCE(?, priority), "
         "body = ?, "
         "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
         "WHERE id = ? AND invalidated_at IS NULL;";
@@ -325,8 +330,9 @@ static int update_instruction(sqlite3 *db,
     int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) return -1;
     bind_optional_text(stmt, 1, instruction_type);
-    sqlite3_bind_text(stmt, 2, body, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int64(stmt, 3, instruction_id);
+    bind_optional_text(stmt, 2, priority);
+    sqlite3_bind_text(stmt, 3, body, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 4, instruction_id);
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     return rc == SQLITE_DONE && sqlite3_changes(db) == 1 ? 0 : -1;
@@ -371,8 +377,13 @@ static int commit_result_owned(sqlite3 *db, cJSON **result_io,
 
 const ipman_param_desc_t ipman_op_instruction_add_params[] = {
     { "entity_type" }, { "entity_id" }, { "body" }, { "instruction_type" },
+    { "priority" },
     { NULL },
 };
+
+static int is_valid_priority(const char *value) {
+    return strcmp(value, "critical") == 0 || strcmp(value, "normal") == 0;
+}
 
 int ipman_op_instruction_add(const ipman_request_t *req, sqlite3 *db,
                             cJSON **result_out,
@@ -381,6 +392,7 @@ int ipman_op_instruction_add(const ipman_request_t *req, sqlite3 *db,
     const char *entity_type = NULL;
     sqlite3_int64 entity_id = 0;
     const char *instruction_type = NULL;
+    const char *priority = NULL;
     const char *body = NULL;
     if (read_entity_ref(req->params, &entity_type, &entity_id,
                         err_code_out, err_msg_out) != 0 ||
@@ -388,6 +400,8 @@ int ipman_op_instruction_add(const ipman_request_t *req, sqlite3 *db,
                              err_code_out, err_msg_out) != 0 ||
         read_optional_string(req->params, "instruction_type",
                              &instruction_type,
+                             err_code_out, err_msg_out) != 0 ||
+        read_optional_string(req->params, "priority", &priority,
                              err_code_out, err_msg_out) != 0) {
         return -1;
     }
@@ -397,6 +411,17 @@ int ipman_op_instruction_add(const ipman_request_t *req, sqlite3 *db,
         *err_msg_out = "instruction_type must be non-empty when provided";
         return -1;
     }
+    if (priority != NULL && strcmp(entity_type, "project") != 0) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "priority is only supported for project-scoped instructions";
+        return -1;
+    }
+    if (priority != NULL && !is_valid_priority(priority)) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "priority must be 'critical' or 'normal'";
+        return -1;
+    }
+    if (priority == NULL) priority = "normal";
     if (ipman_db_begin_immediate(db) != 0) {
         *err_code_out = IPMAN_ERR_INTERNAL;
         *err_msg_out = "failed to begin transaction";
@@ -408,8 +433,8 @@ int ipman_op_instruction_add(const ipman_request_t *req, sqlite3 *db,
         return -1;
     }
     sqlite3_int64 instruction_id = 0;
-    if (insert_instruction(db, entity_type, entity_id, instruction_type, body,
-                           req->actor, &instruction_id) != 0) {
+    if (insert_instruction(db, entity_type, entity_id, instruction_type,
+                           priority, body, req->actor, &instruction_id) != 0) {
         run_sql(db, "ROLLBACK;");
         *err_code_out = IPMAN_ERR_INTERNAL;
         *err_msg_out = "failed to add instruction";
@@ -471,7 +496,7 @@ int ipman_op_instruction_list(const ipman_request_t *req, sqlite3 *db,
         return -1;
     }
     const char *sql =
-        "SELECT id, entity_type, entity_id, instruction_type, body, author, "
+        "SELECT id, entity_type, entity_id, instruction_type, priority, body, author, "
         "created_at, updated_at, invalidated_at, invalidated_by "
         "FROM instructions "
         "WHERE entity_type = ? AND entity_id = ? "
@@ -528,7 +553,7 @@ int ipman_op_instruction_list(const ipman_request_t *req, sqlite3 *db,
 }
 
 const ipman_param_desc_t ipman_op_instruction_update_params[] = {
-    { "id" }, { "body" }, { "instruction_type" },
+    { "id" }, { "body" }, { "instruction_type" }, { "priority" },
     { NULL },
 };
 
@@ -538,6 +563,7 @@ int ipman_op_instruction_update(const ipman_request_t *req, sqlite3 *db,
                                const char **err_msg_out) {
     sqlite3_int64 instruction_id = 0;
     const char *instruction_type = NULL;
+    const char *priority = NULL;
     const char *body = NULL;
     if (ipman_read_positive_id(req->params, "id", &instruction_id,
                               err_code_out, err_msg_out) != 0 ||
@@ -545,12 +571,19 @@ int ipman_op_instruction_update(const ipman_request_t *req, sqlite3 *db,
                              err_code_out, err_msg_out) != 0 ||
         read_optional_string(req->params, "instruction_type",
                              &instruction_type,
+                             err_code_out, err_msg_out) != 0 ||
+        read_optional_string(req->params, "priority", &priority,
                              err_code_out, err_msg_out) != 0) {
         return -1;
     }
     if (instruction_type != NULL && is_blank(instruction_type)) {
         *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
         *err_msg_out = "instruction_type must be non-empty when provided";
+        return -1;
+    }
+    if (priority != NULL && !is_valid_priority(priority)) {
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "priority must be 'critical' or 'normal'";
         return -1;
     }
     if (ipman_db_begin_immediate(db) != 0) {
@@ -582,6 +615,12 @@ int ipman_op_instruction_update(const ipman_request_t *req, sqlite3 *db,
         *err_msg_out = "instruction is invalidated";
         return -1;
     }
+    if (priority != NULL && strcmp(entity_type, "project") != 0) {
+        run_sql(db, "ROLLBACK;");
+        *err_code_out = IPMAN_ERR_VALIDATION_FAILED;
+        *err_msg_out = "priority is only supported for project-scoped instructions";
+        return -1;
+    }
     cJSON *old_instruction = load_instruction(db, instruction_id);
     char *old_json = json_print_owned(old_instruction);
     if (old_instruction == NULL || old_json == NULL) {
@@ -592,7 +631,7 @@ int ipman_op_instruction_update(const ipman_request_t *req, sqlite3 *db,
         *err_msg_out = "failed to build instruction event";
         return -1;
     }
-    if (update_instruction(db, instruction_id, instruction_type, body) != 0) {
+    if (update_instruction(db, instruction_id, instruction_type, priority, body) != 0) {
         cJSON_Delete(old_instruction);
         cJSON_free(old_json);
         run_sql(db, "ROLLBACK;");

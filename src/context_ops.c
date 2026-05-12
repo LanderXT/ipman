@@ -346,7 +346,7 @@ static cJSON *load_active_project_instructions(sqlite3 *db) {
      * guidance. Surfaced in context.project so they reach the agent at
      * session start regardless of whether a plan is active. */
     const char *sql =
-        "SELECT id, entity_type, entity_id, instruction_type, body, author, "
+        "SELECT id, entity_type, entity_id, instruction_type, priority, body, author, "
         "created_at, updated_at, invalidated_at, invalidated_by "
         "FROM instructions "
         "WHERE entity_type = 'project' AND invalidated_at IS NULL "
@@ -374,12 +374,14 @@ static cJSON *load_active_project_instructions(sqlite3 *db) {
                                 (double)sqlite3_column_int64(stmt, 2));
         ipman_json_add_text_or_null(row, "instruction_type",
                                     sqlite3_column_text(stmt, 3));
-        ipman_json_add_text_or_null(row, "body", sqlite3_column_text(stmt, 4));
-        ipman_json_add_text_or_null(row, "author", sqlite3_column_text(stmt, 5));
+        ipman_json_add_text_or_null(row, "priority",
+                                    sqlite3_column_text(stmt, 4));
+        ipman_json_add_text_or_null(row, "body", sqlite3_column_text(stmt, 5));
+        ipman_json_add_text_or_null(row, "author", sqlite3_column_text(stmt, 6));
         ipman_json_add_text_or_null(row, "created_at",
-                                    sqlite3_column_text(stmt, 6));
-        ipman_json_add_text_or_null(row, "updated_at",
                                     sqlite3_column_text(stmt, 7));
+        ipman_json_add_text_or_null(row, "updated_at",
+                                    sqlite3_column_text(stmt, 8));
         cJSON_AddItemToArray(array, row);
     }
     sqlite3_finalize(stmt);
