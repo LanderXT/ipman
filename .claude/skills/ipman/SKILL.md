@@ -148,11 +148,16 @@ Create a task, start it, then close it:
 
 ```sh
 echo '{"protocol_version":2,"request_id":"r1","actor":"agent","op":"task.create","params":{"plan_id":1,"title":"Fix login bug"}}' | ipman
-# → result.task.id, e.g. 42
+# → result.task.id (e.g. 42), result.task.local_seq (e.g. 4); plan.code is on the plan (e.g. P1)
 
 echo '{"protocol_version":2,"request_id":"r2","actor":"agent","op":"task.transition","params":{"id":42,"status":"in_progress"}}' | ipman
 
-echo '{"protocol_version":2,"request_id":"r3","actor":"agent","op":"task.close","params":{"id":42,"outcome_summary":"Fixed null check in auth module","closing_comment":"Root cause was missing null guard"}}' | ipman
+# Implement the work, then commit BEFORE closing. Capture the SHA.
+git add src/auth/guard.c
+git commit -m "P1/T4: fix null check in auth module"
+SHA=$(git rev-parse HEAD)
+
+echo '{"protocol_version":2,"request_id":"r3","actor":"agent","op":"task.close","params":{"id":42,"outcome_summary":"Fixed null check in auth module.\ncommit: '"$SHA"'","closing_comment":"Root cause was missing null guard"}}' | ipman
 ```
 
 ### Cancel a Task
@@ -310,7 +315,51 @@ echo '{"protocol_version":2,"request_id":"r20","actor":"agent","op":"phase.list"
 
 For operations not covered here, see `.ipman/operations/ipman.op.*.schema.md` for the full param list.
 
-## 7. Error Codes
+## 7. Commit linkage
+
+Every `task.close` for code-touching work must reference its git commit. See `CLAUDE.md` for the policy; this section is the operational pattern.
+
+### Order of operations
+
+1. Implement the task in the worktree.
+2. Stage only this task's files: `git add <paths>` — avoid `git add -A` when unrelated changes exist.
+3. Commit with the task marker, then capture the SHA:
+
+   ```sh
+   git commit -m "<plan.code>/T<local_seq>: <summary>"
+   SHA=$(git rev-parse HEAD)
+   ```
+
+4. Close with the SHA embedded in `outcome_summary`:
+
+   ```sh
+   ipman --close task_42 \
+     --summary "Extracted auth guard from middleware.
+   commit: $SHA" \
+     --comment "..."
+   ```
+
+### Building the marker
+
+- `plan.code` is returned by `plan.get` (auto-generated as `P<id>` if not user-supplied — see migration `0017_plans_code_autogen.sql`).
+- `local_seq` is returned by `task.get` and `task.list` (per-plan creation order, never reassigned — see migration `0016_tasks_local_seq.sql`).
+- Both are surfaced together in `ipman -N`, so a typical session reads them in one call rather than three.
+
+### Closure formats
+
+| Situation | Line in `outcome_summary` |
+|---|---|
+| Single commit | `commit: <sha>` |
+| Several commits batched into one task | `commit: <sha1>, <sha2>` |
+| Code-less task (research, decision, doc deferred elsewhere) | `no-commit: <reason>` |
+
+### What not to do
+
+- **Don't** close a code-touching task without its SHA. Audit queries that detect drift rely on the `commit:` line being present.
+- **Don't** pool several tasks' changes in the worktree before committing. Once one file holds 5 tasks' worth of edits, splitting them requires archaeology — commit per task, not per session.
+- **Don't** work directly on `main`. Branch per plan (`feat/<plan.code>-<slug>`); merge through PR review.
+
+## 8. Error Codes
 
 | Code | Meaning | Retryable? | Action |
 |---|---|---|---|
@@ -326,7 +375,7 @@ Every error — fatal or semantic — emits a JSON envelope on stdout. The exit 
 - `invalid_request` and `internal_error` cause **exit code 1**: the request could not be executed (malformed JSON, unreachable DB, etc.). Stdout still receives a best-effort error envelope so the caller can surface the code; do not retry without fixing the cause.
 - All other codes cause **exit code 0**: the operation ran but reported a semantic outcome via `ok:false` (validation, not found, conflict, …). Read `error.code` and `error.message` to decide next steps.
 
-## 8. Agent Handoff
+## 9. Agent Handoff
 
 At session start, recover scope and context:
 
