@@ -1975,6 +1975,10 @@ static void next_print_cursor(FILE *out, const char *kind,
     cli_table_t t;
     const char *headers[] = {"Field", "Value"};
     cli_table_init(&t, 2, headers);
+    /* Value is free-form prose for Summary / Description; cap at 80 cols
+     * so long entries don't blow the cursor table to 1000+ columns.
+     * Same treatment as the project_instructions Body column. */
+    cli_table_set_col_max_width(&t, 1, 80);
     add_str_row(&t, "Status",      cJSON_GetObjectItemCaseSensitive(entity, "status"));
     if (include_priority)
         add_str_row(&t, "Priority", cJSON_GetObjectItemCaseSensitive(entity, "priority"));
