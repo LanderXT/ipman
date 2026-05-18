@@ -53,32 +53,48 @@ static void print_header_row(FILE *out, const cli_table_t *t) {
     fputc('\n', out);
 }
 
-/* Split `text` into lines of at most `width` bytes each. Honors existing
- * `\n` as hard line breaks. Within a paragraph, breaks at the rightmost
- * space inside the width window when possible; otherwise hard-breaks at
- * the byte boundary.
+/* Byte length of the UTF-8 sequence whose lead byte is `c`.
+ * Invalid lead bytes (continuation bytes, 0xF8+) return 1 so the walker
+ * keeps moving forward instead of looping. */
+static int utf8_seq_len(unsigned char c) {
+    if (c < 0x80) return 1;
+    if (c < 0xC0) return 1; /* stray continuation byte: treat as 1 */
+    if (c < 0xE0) return 2;
+    if (c < 0xF0) return 3;
+    if (c < 0xF8) return 4;
+    return 1;
+}
+
+/* Display-column count of NUL-terminated UTF-8 `s`. Approximates one
+ * column per codepoint; does not handle wide (CJK) or zero-width
+ * characters. Matches the strlen-based col_width math used elsewhere
+ * for ASCII while keeping multi-byte cells visually aligned. */
+static size_t utf8_display_cols(const char *s) {
+    size_t cols = 0;
+    while (*s) {
+        s += utf8_seq_len((unsigned char)*s);
+        cols++;
+    }
+    return cols;
+}
+
+/* Split `text` into lines of at most `width` display columns each.
+ * Honors existing `\n` as hard line breaks. Within a paragraph, breaks
+ * at the rightmost space inside the width window when possible; if no
+ * space is available, hard-breaks at the next codepoint boundary so
+ * UTF-8 sequences are never split mid-byte.
  *
- * When width <= 0, or when text contains any byte >= 0x80 (start of a
- * multi-byte UTF-8 sequence), no wrapping is performed — the text is
- * returned as a single line. This keeps codepoints intact at the cost
- * of one unwrapped cell; pure-ASCII cells (the common case for the
- * project block) wrap as expected.
- *
- * On success, *lines_out is malloc'd and contains *count_out strdup'd
- * line buffers; the caller frees each lines[i] and lines itself.
- * Returns 0 on success, -1 on allocation failure (no partial output). */
+ * width <= 0 disables wrapping (a single line per `\n`-delimited
+ * paragraph is emitted regardless of length). On success, *lines_out
+ * is malloc'd and *count_out lines are each malloc'd strings; the
+ * caller frees each lines[i] and lines itself. Returns -1 on alloc
+ * failure with no partial output. */
 static int wrap_cell(const char *text, int width,
                      char ***lines_out, int *count_out) {
     *lines_out = NULL;
     *count_out = 0;
     if (text == NULL) text = "";
-
-    int can_wrap = (width > 0);
-    if (can_wrap) {
-        for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
-            if (*p >= 0x80) { can_wrap = 0; break; }
-        }
-    }
+    size_t text_len = strlen(text);
 
     size_t cap = 8, n = 0;
     char **arr = malloc(cap * sizeof *arr);
@@ -93,59 +109,95 @@ static int wrap_cell(const char *text, int width,
         } \
         arr[n] = malloc((blen) + 1); \
         if (arr[n] == NULL) goto oom; \
-        memcpy(arr[n], (buf), (blen)); \
+        if ((blen) > 0) memcpy(arr[n], (buf), (blen)); \
         arr[n][(blen)] = '\0'; \
         n++; \
     } while (0)
 
-    if (!can_wrap) {
-        APPEND_LINE(text, strlen(text));
+    /* width <= 0 path: split only at `\n`, no width-based wrapping. */
+    if (width <= 0) {
+        size_t para_start = 0;
+        for (size_t i = 0; i <= text_len; i++) {
+            if (i == text_len || text[i] == '\n') {
+                APPEND_LINE(text + para_start, i - para_start);
+                para_start = i + 1;
+                if (i == text_len) break;
+            }
+        }
+        if (n == 0) APPEND_LINE("", (size_t)0);
         *lines_out = arr;
         *count_out = (int)n;
         return 0;
     }
 
-    const char *p = text;
-    while (1) {
-        const char *nl       = strchr(p, '\n');
-        size_t      para_len = nl ? (size_t)(nl - p) : strlen(p);
-        if (para_len == 0) {
-            APPEND_LINE("", (size_t)0);
-        } else {
-            size_t start = 0;
-            while (start < para_len) {
-                size_t remaining = para_len - start;
-                size_t take = remaining < (size_t)width ? remaining : (size_t)width;
-                if (take < remaining) {
-                    size_t break_at = 0;
-                    for (size_t i = take; i > 0; i--) {
-                        if (p[start + i - 1] == ' ') { break_at = i - 1; break; }
-                    }
-                    if (break_at == 0) break_at = take; /* no space → hard break */
-                    APPEND_LINE(p + start, break_at);
-                    start += break_at;
-                    while (start < para_len && p[start] == ' ') start++;
-                } else {
-                    APPEND_LINE(p + start, take);
-                    start += take;
-                }
+    /* Codepoint walk for width-based wrapping. line_start is the byte
+     * offset where the current visual line begins; line_cols is the
+     * display-column count emitted on it so far; last_space is the byte
+     * offset of the most recent ASCII space in the current line, or
+     * SIZE_MAX if none. */
+    size_t i          = 0;
+    size_t line_start = 0;
+    size_t line_cols  = 0;
+    size_t last_space = (size_t)-1;
+
+    while (i < text_len) {
+        if (text[i] == '\n') {
+            APPEND_LINE(text + line_start, i - line_start);
+            line_start = i + 1;
+            line_cols  = 0;
+            last_space = (size_t)-1;
+            i++;
+            continue;
+        }
+        int seq = utf8_seq_len((unsigned char)text[i]);
+        if (i + (size_t)seq > text_len) seq = (int)(text_len - i);
+
+        if (line_cols + 1 > (size_t)width) {
+            /* Wrap before consuming this codepoint. */
+            if (last_space != (size_t)-1) {
+                APPEND_LINE(text + line_start, last_space - line_start);
+                line_start = last_space + 1;
+                while (line_start < text_len && text[line_start] == ' ') line_start++;
+            } else {
+                APPEND_LINE(text + line_start, i - line_start);
+                line_start = i;
+            }
+            /* Recompute line_cols and last_space for the residue between
+             * line_start and i (the codepoints we skipped past when
+             * unwinding to the chosen break point). */
+            line_cols  = 0;
+            last_space = (size_t)-1;
+            for (size_t k = line_start; k < i; ) {
+                int sl = utf8_seq_len((unsigned char)text[k]);
+                if (k + (size_t)sl > i) sl = (int)(i - k);
+                if (text[k] == ' ') last_space = k;
+                line_cols++;
+                k += (size_t)sl;
             }
         }
-        if (nl == NULL) break;
-        p = nl + 1;
+
+        if (text[i] == ' ') last_space = i;
+        line_cols++;
+        i += (size_t)seq;
     }
 
+    /* Trailing partial line. A text ending in `\n` won't enter here
+     * because line_start has already advanced past the last `\n`. */
+    if (line_start < text_len) {
+        APPEND_LINE(text + line_start, text_len - line_start);
+    }
     if (n == 0) APPEND_LINE("", (size_t)0);
+
+#undef APPEND_LINE
 
     *lines_out = arr;
     *count_out = (int)n;
     return 0;
 
 oom:
-    for (size_t i = 0; i < n; i++) free(arr[i]);
+    for (size_t k = 0; k < n; k++) free(arr[k]);
     free(arr);
     return -1;
-#undef APPEND_LINE
 }
 
 static void print_data_row(FILE *out, const cli_table_t *t, int row) {
@@ -174,11 +226,16 @@ static void print_data_row(FILE *out, const cli_table_t *t, int row) {
             } else if (line == 0) {
                 piece = t->cells[row][c] ? t->cells[row][c] : "";
             }
-            int len = (int)strlen(piece);
-            if (len > w) len = w; /* defensive: don't overflow column */
+            size_t byte_len = strlen(piece);
+            size_t disp     = utf8_display_cols(piece);
             fputc(' ', out);
-            fwrite(piece, 1, (size_t)len, out);
-            for (int i = len; i < w; i++) fputc(' ', out);
+            fwrite(piece, 1, byte_len, out);
+            /* Pad to column width in display columns. If disp > w (no
+             * wrap path with a long line), emit no padding so the cell
+             * overflows visually rather than truncating content. */
+            if (disp < (size_t)w) {
+                for (size_t i = disp; i < (size_t)w; i++) fputc(' ', out);
+            }
             fputc(' ', out);
             fputs(k_v, out);
         }
