@@ -2058,6 +2058,11 @@ static int next_print_project(FILE *out, const cJSON *project) {
         cli_table_t pt;
         const char *phdr[] = {"Priority", "Type", "Body"};
         cli_table_init(&pt, 3, phdr);
+        /* Body is free-form prose, often multi-paragraph. Cap at 80 cols
+         * so a single critical-priority instruction does not blow the
+         * table out to 1000+ columns. Codepoint-aware wrap in cli_output
+         * keeps em-dashes and other UTF-8 chars intact. */
+        cli_table_set_col_max_width(&pt, 2, 80);
         const cJSON *e;
         cJSON_ArrayForEach(e, pi) {
             const cJSON *body  = cJSON_GetObjectItemCaseSensitive(e, "body");
