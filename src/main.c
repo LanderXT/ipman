@@ -1985,9 +1985,15 @@ static void next_print_cursor(FILE *out, const char *kind,
 }
 
 /* Project block renderer for --next. Skips empty subsections so the
- * banner stays compact for fresh workspaces. */
-static void next_print_project(FILE *out, const cJSON *project) {
-    if (!cJSON_IsObject(project)) return;
+ * banner stays compact for fresh workspaces.
+ *
+ * Returns the number of subsections (tools / env_vars / instructions)
+ * that actually rendered a table. The project banner (name / description)
+ * does not count: callers use the return value to decide whether the call
+ * produced agent-actionable content when no plan is active. */
+static int next_print_project(FILE *out, const cJSON *project) {
+    if (!cJSON_IsObject(project)) return 0;
+    int rendered = 0;
     const cJSON *name = cJSON_GetObjectItemCaseSensitive(project, "name");
     const cJSON *desc = cJSON_GetObjectItemCaseSensitive(project, "description");
     fprintf(out, "Project: %s\n",
@@ -2018,6 +2024,7 @@ static void next_print_project(FILE *out, const cJSON *project) {
         }
         cli_table_print(&tt, out);
         cli_table_free(&tt);
+        rendered++;
     }
 
     const cJSON *envs = cJSON_GetObjectItemCaseSensitive(project, "env_vars");
@@ -2042,6 +2049,7 @@ static void next_print_project(FILE *out, const cJSON *project) {
         }
         cli_table_print(&et, out);
         cli_table_free(&et);
+        rendered++;
     }
 
     const cJSON *pi = cJSON_GetObjectItemCaseSensitive(project, "instructions");
@@ -2065,7 +2073,9 @@ static void next_print_project(FILE *out, const cJSON *project) {
         cli_table_print(&pt, out);
         cli_table_free(&pt);
         fputs("</project_instructions>\n", out);
+        rendered++;
     }
+    return rendered;
 }
 
 /* Section renderer for --next: project banner + per-cursor Field/Value
@@ -2080,7 +2090,7 @@ static void next_render(const cJSON *project,
                         const cJSON *phase_instr,
                         const cJSON *task_instr,
                         const cJSON *pending) {
-    next_print_project(stdout, project);
+    (void)next_print_project(stdout, project);
     fputc('\n', stdout);
     next_print_cursor(stdout, "Plan",  /*priority=*/1, plan_obj);
     next_print_cursor(stdout, "Phase", /*priority=*/0, phase_obj);
@@ -2169,10 +2179,10 @@ static int run_next(void) {
     cJSON_Delete(ctx);
 
     if (plan_id <= 0) {
-        /* No active plan, but the project block is still useful: tools,
+        /* No active plan, but the project block may still be useful: tools,
          * env_vars, and project-scoped instructions reach the agent
          * regardless of cursor state. Render it and surface a hint. */
-        next_print_project(stdout, project);
+        int rendered = next_print_project(stdout, project);
         if (project) cJSON_Delete(project);
         if (git_branch[0] != '\0') {
             fprintf(stderr, "ipman next: on branch '%s' — no plan bound; "
@@ -2182,7 +2192,12 @@ static int run_next(void) {
                     "ipman next: no active plan — run `ipman --activate <plan>` first\n");
         }
         ipman_db_close(db);
-        return 1;
+        /* Exit 0 when any project subsection (tools / env_vars /
+         * instructions) was rendered: stdout carries content the caller
+         * should treat as a successful read. Exit 1 only when the project
+         * block produced nothing, so the caller's "call failed" handler
+         * still fires on a truly empty workspace. */
+        return rendered > 0 ? 0 : 1;
     }
     /* Print branch context before the plan view. */
     if (git_branch[0] != '\0') {
