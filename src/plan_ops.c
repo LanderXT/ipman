@@ -434,6 +434,7 @@ static cJSON *plan_from_row(sqlite3_stmt *stmt) {
 
     cJSON_AddNumberToObject(plan, "id", (double)sqlite3_column_int64(stmt, 0));
     ipman_json_add_text_or_null(plan, "label",         sqlite3_column_text(stmt, 17));
+    ipman_json_add_text_or_null(plan, "code",          sqlite3_column_text(stmt, 1));
     ipman_json_add_text_or_null(plan, "title", sqlite3_column_text(stmt, 2));
     ipman_json_add_text_or_null(plan, "summary", sqlite3_column_text(stmt, 3));
     ipman_json_add_text_or_null(plan, "description", sqlite3_column_text(stmt, 4));

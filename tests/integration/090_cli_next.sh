@@ -66,9 +66,11 @@ expect_ok "$(call_ipman "{\"protocol_version\":2,\"request_id\":\"sett\",\"actor
 out=$("$BIN" --next)
 
 # Cursor banners — one line each, in order.
-# v2.0 dropped `code` from plan responses, so next_print_cursor falls
-# back to `label` for the heading.
-printf '%s' "$out" | grep -q "^Plan: next-plan · Next Plan$"
+# next_print_cursor prefers `code` over `label` for the plan heading.
+# Now that plan.code rides along on plan responses, the plan banner uses
+# the supplied code (`NX-1`); phase/task banners still use label since
+# only plans carry a code.
+printf '%s' "$out" | grep -q "^Plan: NX-1 · Next Plan$"
 printf '%s' "$out" | grep -q "^Phase: nx-phase · NX-1 Phase$"
 printf '%s' "$out" | grep -q "^Task: task-one · Task one$"
 
