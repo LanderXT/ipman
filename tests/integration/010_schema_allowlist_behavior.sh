@@ -136,9 +136,11 @@ task=$(call_ipman "{\"protocol_version\":2,\"request_id\":\"task\",\"actor\":\"t
 expect_ok "$task"
 task_id=$(printf '%s' "$task" | jq -r '.result.task.id')
 
-# Verify v2 output shape: uid and code absent on plan response; label still present.
+# Verify v2 output shape: uid absent on plan response; label and code both present.
+# code rides along on every plan read so agents can construct refs of the form
+# `<plan.code>/T<local_seq>` without a separate plan.lookup round-trip.
 printf '%s' "$plan" | jq -e '.result.plan | has("uid") | not' >/dev/null
-printf '%s' "$plan" | jq -e '.result.plan | has("code") | not' >/dev/null
+printf '%s' "$plan" | jq -e '.result.plan.code == "TST-001"' >/dev/null
 printf '%s' "$plan" | jq -e '.result.plan | has("label")' >/dev/null
 printf '%s' "$task" | jq -e '.result.task | has("uid") | not' >/dev/null
 

@@ -104,4 +104,47 @@ printf '%s' "$history" | jq -e '
 bad_neg=$(call_ipman '{"protocol_version":2,"request_id":"n1","actor":"test","op":"instruction.add","params":{"entity_type":"plan","entity_id":0,"body":"x"}}')
 expect_error_code "$bad_neg" "validation_failed"
 
+# --- priority field on project-scoped instructions --------------------------
+
+# priority=critical accepted
+crit=$(call_ipman '{"protocol_version":2,"request_id":"p1","actor":"hleal","op":"instruction.add","params":{"entity_type":"project","entity_id":1,"instruction_type":"constraint","priority":"critical","body":"All user-facing text must be in Spanish."}}')
+expect_ok "$crit"
+printf '%s' "$crit" | jq -e '.result.instruction.priority == "critical"' >/dev/null
+crit_id=$(printf '%s' "$crit" | jq -r '.result.instruction.id')
+
+# priority=normal accepted explicitly
+norm=$(call_ipman '{"protocol_version":2,"request_id":"p2","actor":"hleal","op":"instruction.add","params":{"entity_type":"project","entity_id":1,"instruction_type":"guidance","priority":"normal","body":"Reuse existing patterns where possible."}}')
+expect_ok "$norm"
+printf '%s' "$norm" | jq -e '.result.instruction.priority == "normal"' >/dev/null
+
+# priority defaults to normal when omitted
+no_prio=$(call_ipman '{"protocol_version":2,"request_id":"p3","actor":"hleal","op":"instruction.add","params":{"entity_type":"project","entity_id":1,"body":"Prefer idiomatic C over clever macros."}}')
+expect_ok "$no_prio"
+printf '%s' "$no_prio" | jq -e '.result.instruction.priority == "normal"' >/dev/null
+
+# invalid priority value rejected
+bad_prio=$(call_ipman '{"protocol_version":2,"request_id":"p4","actor":"hleal","op":"instruction.add","params":{"entity_type":"project","entity_id":1,"body":"x","priority":"high"}}')
+expect_error_code "$bad_prio" "validation_failed"
+printf '%s' "$bad_prio" | jq -e '.error.message | contains("critical")' >/dev/null
+
+# priority on non-project scope rejected (need a real plan to reach priority validation)
+plan_p=$(call_ipman '{"protocol_version":2,"request_id":"pp1","actor":"hleal","op":"plan.create","params":{"title":"Priority scope test"}}')
+expect_ok "$plan_p"
+plan_p_id=$(printf '%s' "$plan_p" | jq -r '.result.plan.id')
+bad_scope=$(call_ipman "{\"protocol_version\":2,\"request_id\":\"p5\",\"actor\":\"hleal\",\"op\":\"instruction.add\",\"params\":{\"entity_type\":\"plan\",\"entity_id\":$plan_p_id,\"body\":\"x\",\"priority\":\"critical\"}}")
+expect_error_code "$bad_scope" "validation_failed"
+printf '%s' "$bad_scope" | jq -e '.error.message | contains("project-scoped")' >/dev/null
+
+# instruction.update can change priority on a project-scoped instruction
+upd_prio=$(call_ipman "{\"protocol_version\":2,\"request_id\":\"p6\",\"actor\":\"hleal\",\"op\":\"instruction.update\",\"params\":{\"id\":$crit_id,\"body\":\"All user-facing text must be in Spanish.\",\"priority\":\"normal\"}}")
+expect_ok "$upd_prio"
+printf '%s' "$upd_prio" | jq -e '.result.instruction.priority == "normal"' >/dev/null
+
+# workspace.context_get includes priority on project instructions
+ctx2=$(call_ipman '{"protocol_version":2,"request_id":"c2","actor":"test","op":"workspace.context_get","params":{}}')
+expect_ok "$ctx2"
+printf '%s' "$ctx2" | jq -e '
+  .result.context.project.instructions | map(select(.priority != null)) | length > 0
+' >/dev/null
+
 echo "ok 210_project_instructions"

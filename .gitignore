@@ -8,3 +8,8 @@ build/
 # Negate-from-ignored-dir doesn't work in git — ignore contents instead.
 /.pman/*
 !/.pman/exports/
+
+# ipman workspace
+.ipman/ipman.db
+.ipman/keysalt
+.ipman/ipman.db.bak
